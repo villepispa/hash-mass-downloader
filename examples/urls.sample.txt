@@ -1,0 +1,7 @@
+# Example URL list — one URL per line (blank lines and # comments ignored).
+# Space-separated URLs on one line are also accepted.
+#
+# Use real HTTPS URLs that return HTTP 200. Paths under example.com usually 404.
+# Small public fixtures for a first live smoke (replace with your triage list):
+https://httpbin.org/bytes/128
+https://www.google.com/favicon.ico

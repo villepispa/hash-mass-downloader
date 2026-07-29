@@ -1,0 +1,11 @@
+# Ignore local noise
+*.log
+out/
+work/
+*.api.key
+
+# Ad-hoc lab drafts
+scripts/_drafts/
+
+# Cursor agent / VM workspace state (not part of the product)
+.cursor/

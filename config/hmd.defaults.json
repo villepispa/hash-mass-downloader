@@ -1,0 +1,18 @@
+{
+  "ApiDelaySeconds": 16,
+  "DownloadThreads": 5,
+  "MaxFileBytes": 104857600,
+  "CacheTtlDays": 7,
+  "MaliciousThreshold": 1,
+  "SuspiciousThreshold": 1,
+  "QuarantineMalicious": true,
+  "QuarantineSuspicious": false,
+  "UploadUnknownSamples": false,
+  "GenerateReport": true,
+  "DisplaySummary": true,
+  "DisplayScanLog": true,
+  "MaxDownloadRetries": 3,
+  "AnalysisPollSeconds": 15,
+  "AnalysisPollMaxAttempts": 20,
+  "UserAgent": "Hash.MassDownloader/0.1"
+}

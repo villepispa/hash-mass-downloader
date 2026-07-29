@@ -1,0 +1,111 @@
+#Requires -Version 7.2
+<#
+.SYNOPSIS
+  Entry point for Hash.MassDownloader bulk download + VirusTotal triage.
+
+.DESCRIPTION
+  **Safety tier: 2**
+
+  Controlled network write: downloads URLs and optionally calls VirusTotal.
+  API key from VIRUSTOTAL_API_KEY or -ApiKey. Sample upload is opt-in.
+  Post-run host summary/log display follows config/hmd.defaults.json
+  (`DisplaySummary`, `DisplayScanLog`) unless -AgentSummary is set.
+
+.PARAMETER InputPath
+  TXT or CSV URL list.
+
+.PARAMETER WorkRoot
+  Output root (folders created under this path).
+
+.PARAMETER ApiKey
+  Optional SecureString API key (else VIRUSTOTAL_API_KEY).
+
+.PARAMETER UploadUnknownSamples
+  Upload unknown hashes to VirusTotal (default off).
+
+.PARAMETER SkipVirusTotal
+  Download and hash only (no VT API calls).
+
+.PARAMETER AgentSummary
+  One success-stream line for agents:
+  HMD-RUN-OK input=N pending=N processed=N skipped=N clean=N … priorScanlog=0|1
+  Disables DisplaySummary/DisplayScanLog unless overridden via module ConfigOverride.
+  Suppresses full JSON on the success stream.
+
+.EXAMPLE
+  pwsh -NoProfile -File .\scripts\Invoke-HmdBulkDownload.ps1 `
+    -InputPath .\examples\urls.sample.txt -WorkRoot .\out\run1 -SkipVirusTotal
+
+.EXAMPLE
+  pwsh -NoProfile -File .\scripts\Invoke-HmdBulkDownload.ps1 `
+    -InputPath .\examples\urls.sample.txt -WorkRoot .\out\run1 -AgentSummary
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)]
+    [string]$InputPath,
+
+    [Parameter(Mandatory)]
+    [string]$WorkRoot,
+
+    [SecureString]$ApiKey,
+
+    [switch]$UploadUnknownSamples,
+
+    [switch]$SkipVirusTotal,
+
+    [switch]$AgentSummary
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$moduleManifest = Join-Path $repoRoot 'src\Hash.MassDownloader\Hash.MassDownloader.psd1'
+Import-Module $moduleManifest -Force
+
+$params = @{
+    InputPath      = $InputPath
+    WorkRoot       = $WorkRoot
+    SkipVirusTotal = $SkipVirusTotal
+    AgentSummary   = $AgentSummary
+}
+if ($PSBoundParameters.ContainsKey('ApiKey')) {
+    $params['ApiKey'] = $ApiKey
+}
+if ($UploadUnknownSamples) {
+    $params['UploadUnknownSamples'] = $true
+}
+
+try {
+    $result = Invoke-HmdBulkDownload @params
+    if ($AgentSummary) {
+        Write-Output (
+            'HMD-RUN-OK input={0} pending={1} processed={2} skipped={3} clean={4} suspicious={5} malicious={6} unknown={7} error={8} priorScanlog={9}' -f `
+                $result.InputCount,
+                $result.PendingCount,
+                $result.ProcessedCount,
+                $result.SkippedByCheckpoint,
+                $result.CleanCount,
+                $result.SuspiciousCount,
+                $result.MaliciousCount,
+                $result.UnknownCount,
+                $result.ErrorCount,
+                $(if ($result.RecordsArePriorScanlog) { '1' } else { '0' })
+        )
+        exit 0
+    }
+    $result | ConvertTo-Json -Depth 4
+    exit 0
+}
+catch {
+    if ($AgentSummary) {
+        $msg = ($_.Exception.Message -replace '\s+', ' ').Trim()
+        if ($msg.Length -gt 160) {
+            $msg = $msg.Substring(0, 160)
+        }
+        Write-Output ("HMD-RUN-FAIL exit=1 detail={0}" -f $msg)
+        exit 1
+    }
+    throw
+}
