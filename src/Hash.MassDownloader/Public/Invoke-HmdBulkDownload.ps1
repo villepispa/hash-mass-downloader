@@ -7,10 +7,11 @@ function Invoke-HmdBulkDownload {
     .DESCRIPTION
         Orchestrates parallel download and serialized VT lookups with cache,
         checkpoint resume, quarantine policy, and HTML/CSV artefacts.
+        Optional Clean deploy; deploy-map http(s) URLs are harvested into the
+        download queue (HMD-027). Local Defender scan hard-gates threats (HMD-026).
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)]
         [string]$InputPath,
 
         [Parameter(Mandatory)]
@@ -22,9 +23,13 @@ function Invoke-HmdBulkDownload {
 
         [switch]$SkipVirusTotal,
 
+        [switch]$SkipLocalAvScan,
+
         [scriptblock]$VtInvoker,
 
         [scriptblock]$DownloadInvoker,
+
+        [scriptblock]$LocalAvInvoker,
 
         [hashtable]$ConfigOverride = @{},
 
@@ -41,6 +46,9 @@ function Invoke-HmdBulkDownload {
     }
     if ($NoFileNamePrefix) {
         $cfg.PrefixFileNames = $false
+    }
+    if ($SkipLocalAvScan) {
+        $cfg.LocalAvScanEnabled = $false
     }
     # Agent-friendly one-liner: keep host noise off unless explicitly overridden.
     if ($AgentSummary) {
@@ -61,8 +69,31 @@ function Invoke-HmdBulkDownload {
     $cache = Import-HmdHashCache -Path $cachePath
     $completed = Import-HmdCheckpoint -Path $ckptPath
 
-    # Pipeline-enumerated lists — @() is correct here (one object per URL/result).
-    $allUrls = [string[]]@(Import-HmdUrlList -Path $InputPath)
+    $mapRows = @()
+    $harvested = [string[]]@()
+    if (-not [string]::IsNullOrWhiteSpace($DeployMapPath)) {
+        $mapRows = @(Import-HmdDeployMap -Path $DeployMapPath)
+        $harvested = @(Get-HmdUrlsFromDeployMap -MapRows $mapRows)
+    }
+
+    $urlList = [System.Collections.Generic.List[string]]::new()
+    $seenUrls = @{}
+    if (-not [string]::IsNullOrWhiteSpace($InputPath)) {
+        foreach ($u in [string[]]@(Import-HmdUrlList -Path $InputPath)) {
+            if ($seenUrls.ContainsKey($u)) { continue }
+            $seenUrls[$u] = $true
+            $urlList.Add($u)
+        }
+    }
+    foreach ($u in $harvested) {
+        if ($seenUrls.ContainsKey($u)) { continue }
+        $seenUrls[$u] = $true
+        $urlList.Add($u)
+    }
+    $allUrls = [string[]]$urlList.ToArray()
+    if ($allUrls.Count -eq 0) {
+        throw 'No URLs to process: provide -InputPath and/or -DeployMapPath with http(s) File entries.'
+    }
 
     $queuedList = [System.Collections.Generic.List[string]]::new()
     foreach ($u in $allUrls) {
@@ -75,6 +106,16 @@ function Invoke-HmdBulkDownload {
     $apiKeyPlain = $null
     if (-not $SkipVirusTotal) {
         $apiKeyPlain = Resolve-HmdApiKey -ApiKey $ApiKey
+    }
+
+    $localAvEnabled = $true
+    if ($null -ne $cfg.PSObject.Properties['LocalAvScanEnabled']) {
+        $localAvEnabled = [bool]$cfg.LocalAvScanEnabled
+    }
+    $localAvProvider = 'Defender'
+    if ($null -ne $cfg.PSObject.Properties['LocalAvProvider'] -and
+        -not [string]::IsNullOrWhiteSpace([string]$cfg.LocalAvProvider)) {
+        $localAvProvider = [string]$cfg.LocalAvProvider
     }
 
     $downloadResults = [object[]]@()
@@ -104,8 +145,20 @@ function Invoke-HmdBulkDownload {
                     Undetected      = [int]$(if ($null -ne $row.PSObject.Properties['Undetected']) { $row.Undetected } else { 0 })
                     Harmless        = [int]$(if ($null -ne $row.PSObject.Properties['Harmless'] -and
                             -not [string]::IsNullOrWhiteSpace([string]$row.Harmless)) { $row.Harmless } else { 0 })
+                    IgnoredEngines  = $(if ($null -ne $row.PSObject.Properties['IgnoredEngines']) {
+                            [string]$row.IgnoredEngines
+                        }
+                        else { '' })
                     SignatureStatus = $row.SignatureStatus
                     Signer          = $row.Signer
+                    DefenderStatus  = $(if ($null -ne $row.PSObject.Properties['DefenderStatus']) {
+                            [string]$row.DefenderStatus
+                        }
+                        else { '' })
+                    DefenderThreat  = $(if ($null -ne $row.PSObject.Properties['DefenderThreat']) {
+                            [string]$row.DefenderThreat
+                        }
+                        else { '' })
                     ContentType     = $row.ContentType
                     Bytes           = $row.Bytes
                     CacheHit        = $row.CacheHit
@@ -126,8 +179,11 @@ function Invoke-HmdBulkDownload {
             Suspicious       = 0
             Undetected       = 0
             Harmless         = 0
+            IgnoredEngines   = ''
             SignatureStatus  = ''
             Signer           = ''
+            DefenderStatus   = ''
+            DefenderThreat   = ''
             ContentType      = $dl.ContentType
             Bytes            = $dl.Bytes
             CacheHit         = $false
@@ -152,66 +208,118 @@ function Invoke-HmdBulkDownload {
 
             $verdict = 'Unknown'
             $mal = 0; $sus = 0; $und = 0; $harm = 0
+            $ignoredEngines = ''
             $fromCache = $false
+            $skipVt = $false
+            $ignoreList = @(Get-HmdIgnoreEngineList -IgnoreEngines $(
+                    if ($null -ne $cfg.PSObject.Properties['IgnoreEngines']) { $cfg.IgnoreEngines } else { @() }
+                ))
 
-            if ($cache.ContainsKey($sha) -and
-                (Test-HmdCacheEntryFresh -CachedAt $cache[$sha].CachedAt -TtlDays ([int]$cfg.CacheTtlDays))) {
-                $fromCache = $true
-                $c = $cache[$sha]
-                $verdict = $c.Verdict
-                $mal = [int]$c.Malicious
-                $sus = [int]$c.Suspicious
-                $und = [int]$c.Undetected
-                $harm = $(if ($null -ne $c.PSObject.Properties['Harmless']) { [int]$c.Harmless } else { 0 })
-            }
-            elseif (-not $SkipVirusTotal) {
-                $report = Get-HmdHashReport -Sha256 $sha -ApiKey $apiKeyPlain `
-                    -Invoker $VtInvoker -ApiDelaySeconds ([int]$cfg.ApiDelaySeconds)
-
-                if ($report.Found) {
-                    $mal = [int]$report.Malicious
-                    $sus = [int]$report.Suspicious
-                    $und = [int]$report.Undetected
-                    $harm = [int]$report.Harmless
-                    $verdict = Get-HmdVerdictFromStats -Malicious $mal -Suspicious $sus `
-                        -Undetected $und -MaliciousThreshold ([int]$cfg.MaliciousThreshold) `
-                        -SuspiciousThreshold ([int]$cfg.SuspiciousThreshold) -Known
+            # HMD-026: local AV hard gate before VT.
+            if ($localAvEnabled) {
+                $av = Invoke-HmdLocalAvScan -Path $dl.LocalPath -Provider $localAvProvider `
+                    -Invoker $LocalAvInvoker
+                $record.DefenderStatus = [string]$av.Status
+                $record.DefenderThreat = [string]$av.ThreatName
+                if ($av.Status -eq 'Threat') {
+                    $verdict = 'Malicious'
+                    $skipVt = $true
+                    $record.Error = $(if (-not [string]::IsNullOrWhiteSpace([string]$av.ThreatName)) {
+                            "LocalAv threat: $($av.ThreatName)"
+                        }
+                        else { 'LocalAv threat detected' })
                 }
-                elseif ([bool]$cfg.UploadUnknownSamples) {
-                    $upload = Submit-HmdFile -Path $dl.LocalPath -ApiKey $apiKeyPlain `
+                elseif ($av.Status -eq 'Unavailable' -or $av.Status -eq 'Error') {
+                    $verdict = 'Error'
+                    $skipVt = $true
+                    $detail = [string]$av.Raw
+                    if ([string]::IsNullOrWhiteSpace($detail)) {
+                        $detail = [string]$av.Status
+                    }
+                    $record.Error = "LocalAv $($av.Status): $detail"
+                }
+            }
+            else {
+                $record.DefenderStatus = 'Skipped'
+            }
+
+            if (-not $skipVt) {
+                if ($cache.ContainsKey($sha) -and
+                    (Test-HmdCacheEntryFresh -CachedAt $cache[$sha].CachedAt -TtlDays ([int]$cfg.CacheTtlDays))) {
+                    $fromCache = $true
+                    $c = $cache[$sha]
+                    $verdict = $c.Verdict
+                    $mal = [int]$c.Malicious
+                    $sus = [int]$c.Suspicious
+                    $und = [int]$c.Undetected
+                    $harm = $(if ($null -ne $c.PSObject.Properties['Harmless']) { [int]$c.Harmless } else { 0 })
+                    $ignoredEngines = $(if ($null -ne $c.PSObject.Properties['IgnoredEngines']) {
+                            [string]$c.IgnoredEngines
+                        }
+                        else { '' })
+                }
+                elseif (-not $SkipVirusTotal) {
+                    $report = Get-HmdHashReport -Sha256 $sha -ApiKey $apiKeyPlain `
                         -Invoker $VtInvoker -ApiDelaySeconds ([int]$cfg.ApiDelaySeconds)
-                    $analysisId = [string]$upload.data.id
-                    $analysis = Get-HmdAnalysis -AnalysisId $analysisId -ApiKey $apiKeyPlain `
-                        -Invoker $VtInvoker `
-                        -PollSeconds ([int]$cfg.AnalysisPollSeconds) `
-                        -MaxAttempts ([int]$cfg.AnalysisPollMaxAttempts) `
-                        -ApiDelaySeconds ([int]$cfg.ApiDelaySeconds)
-                    $mal = [int]$analysis.Malicious
-                    $sus = [int]$analysis.Suspicious
-                    $und = [int]$analysis.Undetected
-                    $harm = [int]$analysis.Harmless
-                    $verdict = Get-HmdVerdictFromStats -Malicious $mal -Suspicious $sus `
-                        -Undetected $und -MaliciousThreshold ([int]$cfg.MaliciousThreshold) `
-                        -SuspiciousThreshold ([int]$cfg.SuspiciousThreshold) -Known
+
+                    if ($report.Found) {
+                        $mal = [int]$report.Malicious
+                        $sus = [int]$report.Suspicious
+                        $und = [int]$report.Undetected
+                        $harm = [int]$report.Harmless
+                        $policy = Get-HmdPolicyStatsFromResults -AnalysisResults $report.Results `
+                            -IgnoreEngines $ignoreList `
+                            -RawMalicious $mal -RawSuspicious $sus -RawUndetected $und -RawHarmless $harm
+                        $verdict = Get-HmdVerdictFromStats -Malicious $policy.Malicious -Suspicious $policy.Suspicious `
+                            -Undetected $policy.Undetected -MaliciousThreshold ([int]$cfg.MaliciousThreshold) `
+                            -SuspiciousThreshold ([int]$cfg.SuspiciousThreshold) -Known
+                        if ($policy.IgnoredEngines.Count -gt 0) {
+                            $ignoredEngines = ($policy.IgnoredEngines -join ';')
+                        }
+                    }
+                    elseif ([bool]$cfg.UploadUnknownSamples) {
+                        $upload = Submit-HmdFile -Path $dl.LocalPath -ApiKey $apiKeyPlain `
+                            -Invoker $VtInvoker -ApiDelaySeconds ([int]$cfg.ApiDelaySeconds)
+                        $analysisId = [string]$upload.data.id
+                        $analysis = Get-HmdAnalysis -AnalysisId $analysisId -ApiKey $apiKeyPlain `
+                            -Invoker $VtInvoker `
+                            -PollSeconds ([int]$cfg.AnalysisPollSeconds) `
+                            -MaxAttempts ([int]$cfg.AnalysisPollMaxAttempts) `
+                            -ApiDelaySeconds ([int]$cfg.ApiDelaySeconds)
+                        $mal = [int]$analysis.Malicious
+                        $sus = [int]$analysis.Suspicious
+                        $und = [int]$analysis.Undetected
+                        $harm = [int]$analysis.Harmless
+                        $policy = Get-HmdPolicyStatsFromResults -AnalysisResults $analysis.Results `
+                            -IgnoreEngines $ignoreList `
+                            -RawMalicious $mal -RawSuspicious $sus -RawUndetected $und -RawHarmless $harm
+                        $verdict = Get-HmdVerdictFromStats -Malicious $policy.Malicious -Suspicious $policy.Suspicious `
+                            -Undetected $policy.Undetected -MaliciousThreshold ([int]$cfg.MaliciousThreshold) `
+                            -SuspiciousThreshold ([int]$cfg.SuspiciousThreshold) -Known
+                        if ($policy.IgnoredEngines.Count -gt 0) {
+                            $ignoredEngines = ($policy.IgnoredEngines -join ';')
+                        }
+                    }
+                    else {
+                        $verdict = 'Unknown'
+                    }
+
+                    $cache[$sha] = [pscustomobject]@{
+                        Sha256         = $sha
+                        Verdict        = $verdict
+                        Malicious      = $mal
+                        Suspicious     = $sus
+                        Undetected     = $und
+                        Harmless       = $harm
+                        IgnoredEngines = $ignoredEngines
+                        CachedAt       = Get-Date
+                        Source         = 'VirusTotal'
+                    }
+                    Export-HmdHashCache -Cache $cache -Path $cachePath
                 }
                 else {
                     $verdict = 'Unknown'
                 }
-
-                $cache[$sha] = [pscustomobject]@{
-                    Sha256     = $sha
-                    Verdict    = $verdict
-                    Malicious  = $mal
-                    Suspicious = $sus
-                    Undetected = $und
-                    Harmless   = $harm
-                    CachedAt   = Get-Date
-                    Source     = 'VirusTotal'
-                }
-                Export-HmdHashCache -Cache $cache -Path $cachePath
-            }
-            else {
-                $verdict = 'Unknown'
             }
 
             $record.CacheHit = $fromCache
@@ -220,13 +328,16 @@ function Invoke-HmdBulkDownload {
             $record.Suspicious = $sus
             $record.Undetected = $und
             $record.Harmless = $harm
+            $record.IgnoredEngines = $ignoredEngines
 
             $moved = Move-HmdByVerdict -SourcePath $dl.LocalPath -WorkRoot $work `
                 -Verdict $verdict `
                 -QuarantineMalicious ([bool]$cfg.QuarantineMalicious) `
                 -QuarantineSuspicious ([bool]$cfg.QuarantineSuspicious)
             $record.LocalPath = $moved.FinalPath
-            $record.Error = ''
+            if (-not $skipVt) {
+                $record.Error = ''
+            }
         }
         catch {
             $record.Verdict = 'Error'
@@ -243,7 +354,7 @@ function Invoke-HmdBulkDownload {
         Save-HmdCheckpoint -CompletedUrls $completed -Path $ckptPath
     }
 
-    # Rewrite scan log cleanly (fixed columns so prior rows gain Harmless=0)
+    # Rewrite scan log cleanly (fixed columns so prior rows gain empty Defender fields)
     if ($scanRecords.Count -gt 0) {
         $scanRecords |
             ForEach-Object {
@@ -258,8 +369,20 @@ function Invoke-HmdBulkDownload {
                     Undetected      = [int]$(if ($null -ne $_.PSObject.Properties['Undetected']) { $_.Undetected } else { 0 })
                     Harmless        = [int]$(if ($null -ne $_.PSObject.Properties['Harmless'] -and
                             -not [string]::IsNullOrWhiteSpace([string]$_.Harmless)) { $_.Harmless } else { 0 })
+                    IgnoredEngines  = $(if ($null -ne $_.PSObject.Properties['IgnoredEngines']) {
+                            [string]$_.IgnoredEngines
+                        }
+                        else { '' })
                     SignatureStatus = $_.SignatureStatus
                     Signer          = $_.Signer
+                    DefenderStatus  = $(if ($null -ne $_.PSObject.Properties['DefenderStatus']) {
+                            [string]$_.DefenderStatus
+                        }
+                        else { '' })
+                    DefenderThreat  = $(if ($null -ne $_.PSObject.Properties['DefenderThreat']) {
+                            [string]$_.DefenderThreat
+                        }
+                        else { '' })
                     ContentType     = $_.ContentType
                     Bytes           = $_.Bytes
                     CacheHit        = $_.CacheHit
@@ -279,8 +402,7 @@ function Invoke-HmdBulkDownload {
     $deployErrorCount = 0
     $deploySkipCount = 0
     $deployLog = $null
-    if (-not [string]::IsNullOrWhiteSpace($DeployMapPath)) {
-        $mapRows = @(Import-HmdDeployMap -Path $DeployMapPath)
+    if ($mapRows.Count -gt 0) {
         $deploy = Copy-HmdCleanDeploy -Records @($scanRecords) -MapRows $mapRows `
             -WorkRoot $work -Overwrite ([bool]$cfg.DeployOverwrite)
         $deployedCount = [int]$deploy.DeployedCount
@@ -327,6 +449,7 @@ function Invoke-HmdBulkDownload {
         DeploySkipCount        = $deploySkipCount
         DeployLog              = $deployLog
         PrefixFileNames        = [bool]$cfg.PrefixFileNames
+        LocalAvScanEnabled     = $localAvEnabled
         ScanLog                = $scanPath
         HashCache              = $cachePath
         Report                 = $(if (Test-Path -LiteralPath $reportPath) { $reportPath } else { $null })
@@ -345,7 +468,8 @@ function Invoke-HmdBulkDownload {
                 $cleanCount, $susCount, $malCount, $unknownCount, $errorCount)
         Write-Host ("VT engines (sum):     Undetected={0} Harmless={1}" -f $undetectedSum, $harmlessSum)
         Write-Host ("Prefix file names:    {0}" -f $summary.PrefixFileNames)
-        if (-not [string]::IsNullOrWhiteSpace($DeployMapPath)) {
+        Write-Host ("Local AV scan:        {0}" -f $summary.LocalAvScanEnabled)
+        if ($mapRows.Count -gt 0) {
             Write-Host ("Deploy:               copied={0} miss={1} error={2} skip={3}" -f `
                     $deployedCount, $deployMissCount, $deployErrorCount, $deploySkipCount)
             if ($summary.DeployLog) {
@@ -365,7 +489,8 @@ function Invoke-HmdBulkDownload {
     if ([bool]$cfg.DisplayScanLog -and (Test-Path -LiteralPath $scanPath)) {
         Write-Host '=== scanlog.csv ==='
         Import-Csv -LiteralPath $scanPath |
-            Format-Table -AutoSize Url, FileName, Verdict, Malicious, Suspicious, Undetected, Harmless, CacheHit, Error |
+            Format-Table -AutoSize Url, FileName, Verdict, Malicious, Suspicious, Undetected, Harmless, `
+                DefenderStatus, CacheHit, Error |
             Out-String |
             Write-Host
         Write-Host '==================='

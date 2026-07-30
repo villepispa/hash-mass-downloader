@@ -186,6 +186,18 @@ function Resolve-HmdDeployLeafOut {
         return $leafOut
     }
 
+    # Map File is a full URL — never use the URL string as a dest leaf.
+    if (Test-HmdHttpUrl -Value $Pattern) {
+        $urlLeaf = Get-HmdUrlLeafName -Url ([string]$Record.Url) -Index 0
+        if ($leafOut -match '^\d{4}_(.+)$' -and $Matches[1] -eq $urlLeaf) {
+            return $urlLeaf
+        }
+        if (-not [string]::IsNullOrWhiteSpace($urlLeaf)) {
+            return $urlLeaf
+        }
+        return $leafOut
+    }
+
     if ($Pattern -notmatch '^\d{4}_' -and $leafOut -match '^\d{4}_(.+)$' -and $Matches[1] -eq $Pattern) {
         return $Pattern
     }

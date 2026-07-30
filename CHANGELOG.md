@@ -7,7 +7,31 @@ versioning aligns with [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
-_Nothing queued — latest release: **0.2.0**._
+## [0.3.0] - 2026-07-30
+
+### Added
+
+- **HMD-026**: Local Microsoft Defender hard-gate scan after download
+  (`LocalAvScanEnabled`, `LocalAvProvider`, `-SkipLocalAvScan`); threat →
+  Malicious (skip VT); unavailable/error → Error; scanlog `DefenderStatus` /
+  `DefenderThreat`; HTML Defender column.
+- **HMD-027**: Deploy-map `http(s)` File entries harvested into the download
+  queue and matched by full URL; `-InputPath` optional when the map has ≥1 URL.
+- **HMD-025**: FP-aware VT verdict — config `IgnoreEngines` (default `[]`);
+  `Get-HmdPolicyStatsFromResults` excludes named engines from policy counts;
+  scanlog/hashcache keep **raw** VT tallies and record `IgnoredEngines`;
+  verdict/quarantine/cache use policy counts.
+- Product-brief operator pitfalls: VirusTotal **URL report ≠ file report**
+  (HMD uses SHA-256 file API only); default `MaliciousThreshold=1` + ChromeDriver
+  / VirIT `Win95.Marburg` worked example.
+- Release pipeline: `docs/release.md`, `scripts/Invoke-HmdBumpVersion.ps1`
+  (align ModuleVersion / UserAgent / Status); validate runs `-CheckOnly`
+  (`HMD-024`).
+
+### Changed
+
+- ModuleVersion / UserAgent / Status → **0.3.0**.
+- Product brief **Scope** → v0.3.0 in-scope (local AV + deploy-map URLs + HMD-025).
 
 ## [0.2.0] - 2026-07-30
 

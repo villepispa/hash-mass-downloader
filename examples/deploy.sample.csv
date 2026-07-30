@@ -1,3 +1,4 @@
 Destination,File
 out\deploy-demo\app1,favicon.ico
 out\deploy-demo\shared,*.ico
+out\deploy-demo\app1,https://example.com/optional-from-map.zip

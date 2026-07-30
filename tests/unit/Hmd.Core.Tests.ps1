@@ -73,6 +73,78 @@ Describe 'Get-HmdVerdictFromStats' {
         Get-HmdVerdictFromStats -Malicious 0 -Suspicious 0 -Undetected 0 |
             Should -Be 'Unknown'
     }
+
+    It 'threshold-only: Malicious=1 is Clean when MaliciousThreshold=2' {
+        Get-HmdVerdictFromStats -Malicious 1 -Suspicious 0 -Undetected 65 -Known `
+            -MaliciousThreshold 2 |
+            Should -Be 'Clean'
+    }
+}
+
+Describe 'Get-HmdPolicyStatsFromResults (HMD-025)' {
+    BeforeAll {
+        $script:chromeResults = [pscustomobject]@{
+            VirIT     = [pscustomobject]@{ category = 'malicious'; engine_name = 'VirIT'; result = 'Win95.Marburg' }
+            Microsoft = [pscustomobject]@{ category = 'undetected'; engine_name = 'Microsoft'; result = $null }
+            Google    = [pscustomobject]@{ category = 'undetected'; engine_name = 'Google'; result = $null }
+        }
+    }
+
+    It 'ignore-only: drops VirIT so policy Malicious=0' {
+        $p = Get-HmdPolicyStatsFromResults -AnalysisResults $chromeResults `
+            -IgnoreEngines @('VirIT') `
+            -RawMalicious 1 -RawSuspicious 0 -RawUndetected 2 -RawHarmless 0
+        $p.Malicious | Should -Be 0
+        $p.Undetected | Should -Be 2
+        $p.PolicyFromResults | Should -BeTrue
+        $p.IgnoredEngines | Should -Contain 'VirIT'
+        Get-HmdVerdictFromStats -Malicious $p.Malicious -Suspicious $p.Suspicious `
+            -Undetected $p.Undetected -Known | Should -Be 'Clean'
+    }
+
+    It 'ignore is case-insensitive' {
+        $p = Get-HmdPolicyStatsFromResults -AnalysisResults $chromeResults `
+            -IgnoreEngines @('virit') `
+            -RawMalicious 1 -RawSuspicious 0 -RawUndetected 2 -RawHarmless 0
+        $p.Malicious | Should -Be 0
+        $p.IgnoredEngines | Should -Contain 'VirIT'
+    }
+
+    It 'both: ignore one of two malicious + threshold=2 → Clean' {
+        $results = [pscustomobject]@{
+            VirIT  = [pscustomobject]@{ category = 'malicious'; engine_name = 'VirIT' }
+            Other  = [pscustomobject]@{ category = 'malicious'; engine_name = 'Other' }
+            Clean1 = [pscustomobject]@{ category = 'undetected'; engine_name = 'Clean1' }
+        }
+        $p = Get-HmdPolicyStatsFromResults -AnalysisResults $results `
+            -IgnoreEngines @('VirIT') `
+            -RawMalicious 2 -RawSuspicious 0 -RawUndetected 1 -RawHarmless 0
+        $p.Malicious | Should -Be 1
+        Get-HmdVerdictFromStats -Malicious $p.Malicious -Suspicious $p.Suspicious `
+            -Undetected $p.Undetected -Known -MaliciousThreshold 2 |
+            Should -Be 'Clean'
+        Get-HmdVerdictFromStats -Malicious $p.Malicious -Suspicious $p.Suspicious `
+            -Undetected $p.Undetected -Known -MaliciousThreshold 1 |
+            Should -Be 'Malicious'
+    }
+
+    It 'falls back to raw stats when IgnoreEngines empty' {
+        $p = Get-HmdPolicyStatsFromResults -AnalysisResults $chromeResults `
+            -IgnoreEngines @() `
+            -RawMalicious 1 -RawSuspicious 0 -RawUndetected 65 -RawHarmless 0
+        $p.Malicious | Should -Be 1
+        $p.PolicyFromResults | Should -BeFalse
+        $p.IgnoredEngines.Count | Should -Be 0
+    }
+
+    It 'falls back to raw when results missing but ignore configured' {
+        $p = Get-HmdPolicyStatsFromResults -AnalysisResults $null `
+            -IgnoreEngines @('VirIT') `
+            -RawMalicious 1 -RawSuspicious 0 -RawUndetected 65 -RawHarmless 0
+        $p.Malicious | Should -Be 1
+        $p.PolicyFromResults | Should -BeFalse
+        $p.IgnoredEngines.Count | Should -Be 0
+    }
 }
 
 Describe 'Cache TTL and checkpoint' {
@@ -281,7 +353,10 @@ Describe 'Invoke-HmdBulkDownload with mocks' {
         $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
         $r1 = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
-            -ConfigOverride @{ ApiDelaySeconds = 0; GenerateReport = $true; DisplaySummary = $false; DisplayScanLog = $false }
+            -ConfigOverride @{
+                ApiDelaySeconds = 0; GenerateReport = $true; DisplaySummary = $false
+                DisplayScanLog = $false; LocalAvScanEnabled = $false
+            }
 
         $r1.ProcessedCount | Should -Be 1
         $r1.Records[0].Verdict | Should -Be 'Clean'
@@ -299,7 +374,10 @@ Describe 'Invoke-HmdBulkDownload with mocks' {
         # Resume: same URL should be skipped
         $r2 = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
-            -ConfigOverride @{ ApiDelaySeconds = 0; DisplaySummary = $false; DisplayScanLog = $false }
+            -ConfigOverride @{
+                ApiDelaySeconds = 0; DisplaySummary = $false; DisplayScanLog = $false
+                LocalAvScanEnabled = $false
+            }
         $r2.QueuedCount | Should -Be 0
         $r2.ProcessedCount | Should -Be 0
     }
@@ -342,7 +420,10 @@ tool.exe
         $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
             -NoFileNamePrefix -DeployMapPath $map `
-            -ConfigOverride @{ ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayScanLog = $false }
+            -ConfigOverride @{
+                ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false
+                DisplayScanLog = $false; LocalAvScanEnabled = $false
+            }
 
         $r.Records[0].FileName | Should -Be 'tool.exe'
         $r.PrefixFileNames | Should -BeFalse
@@ -382,11 +463,67 @@ tool.exe
         $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
         $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
-            -ConfigOverride @{ ApiDelaySeconds = 0; QuarantineMalicious = $true; DisplaySummary = $false; DisplayScanLog = $false }
+            -ConfigOverride @{
+                ApiDelaySeconds = 0; QuarantineMalicious = $true; DisplaySummary = $false
+                DisplayScanLog = $false; LocalAvScanEnabled = $false
+            }
 
         $r.Records[0].Verdict | Should -Be 'Malicious'
         @(Get-ChildItem -LiteralPath (Join-Path $work 'Malicious')).Count | Should -Be 1
         @(Get-ChildItem -LiteralPath (Join-Path $work 'Quarantine')).Count | Should -Be 1
+    }
+
+    It 'IgnoreEngines VirIT → Clean while raw Malicious stays 1 (HMD-025)' {
+        $work = Join-Path $TestDrive 'run-ignore-virit'
+        $input = Join-Path $TestDrive 'ignore-virit.txt'
+        "https://mock.example/chromedriver.zip" | Set-Content -LiteralPath $input -Encoding utf8
+
+        $downloadInvoker = {
+            param($req)
+            $bytes = [Text.Encoding]::UTF8.GetBytes('chromedriver-zip-unique-payload')
+            [IO.File]::WriteAllBytes($req.OutFile, $bytes)
+            [pscustomobject]@{ StatusCode = 200; ContentType = 'application/zip'; Bytes = $bytes.Length }
+        }
+        $vtInvoker = {
+            param($req)
+            return [pscustomobject]@{
+                data = [pscustomobject]@{
+                    attributes = [pscustomobject]@{
+                        last_analysis_stats = [pscustomobject]@{
+                            malicious = 1; suspicious = 0; undetected = 65; harmless = 0
+                        }
+                        last_analysis_results = [pscustomobject]@{
+                            VirIT = [pscustomobject]@{
+                                category = 'malicious'; engine_name = 'VirIT'; result = 'Win95.Marburg'
+                            }
+                            Microsoft = [pscustomobject]@{
+                                category = 'undetected'; engine_name = 'Microsoft'; result = $null
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
+        $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
+            -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
+            -ConfigOverride @{
+                ApiDelaySeconds     = 0
+                IgnoreEngines       = @('VirIT')
+                QuarantineMalicious = $true
+                DisplaySummary      = $false
+                DisplayScanLog      = $false
+                GenerateReport      = $false
+                LocalAvScanEnabled  = $false
+            }
+
+        $r.Records[0].Verdict | Should -Be 'Clean'
+        $r.Records[0].Malicious | Should -Be 1
+        $r.Records[0].IgnoredEngines | Should -Be 'VirIT'
+        @(Get-ChildItem -LiteralPath (Join-Path $work 'Clean')).Count | Should -Be 1
+        @(Get-ChildItem -LiteralPath (Join-Path $work 'Quarantine') -ErrorAction SilentlyContinue).Count |
+            Should -Be 0
     }
 
     It 'processes two URLs as two records (no download-result nest)' {
@@ -419,7 +556,10 @@ https://mock.example/b.bin
         $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
         $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
-            -ConfigOverride @{ ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayScanLog = $false }
+            -ConfigOverride @{
+                ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false
+                DisplayScanLog = $false; LocalAvScanEnabled = $false
+            }
 
         $r.InputCount | Should -Be 2
         $r.ProcessedCount | Should -Be 2
@@ -427,6 +567,194 @@ https://mock.example/b.bin
         $r.Records[0].Url | Should -BeOfType ([string])
         $r.Records[0].Verdict | Should -Be 'Clean'
         $r.Records[1].Verdict | Should -Be 'Clean'
+    }
+
+    It 'harvests deploy-map URL, matches by full URL, deploy-map-only (HMD-027)' {
+        $work = Join-Path $TestDrive 'run-harvest'
+        $map = Join-Path $TestDrive 'harvest-map.txt'
+        $dest = Join-Path $TestDrive 'harvest-dest'
+        $url = 'https://mock.example/harvested.zip'
+        @"
+@$dest
+$url
+extra-leaf.bin
+"@ | Set-Content -LiteralPath $map -Encoding utf8
+
+        $downloadInvoker = {
+            param($req)
+            $bytes = [Text.Encoding]::UTF8.GetBytes('harvested-zip-bytes')
+            [IO.File]::WriteAllBytes($req.OutFile, $bytes)
+            [pscustomobject]@{ StatusCode = 200; ContentType = 'application/zip'; Bytes = $bytes.Length }
+        }
+        $vtInvoker = {
+            param($req)
+            return [pscustomobject]@{
+                data = [pscustomobject]@{
+                    attributes = [pscustomobject]@{
+                        last_analysis_stats = [pscustomobject]@{
+                            malicious = 0; suspicious = 0; undetected = 40; harmless = 5
+                        }
+                    }
+                }
+            }
+        }
+        $avClean = {
+            param($req)
+            [pscustomobject]@{ Status = 'Clean'; ThreatName = ''; Provider = 'Defender' }
+        }
+
+        $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
+        $r = Invoke-HmdBulkDownload -DeployMapPath $map -WorkRoot $work `
+            -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
+            -LocalAvInvoker $avClean -NoFileNamePrefix `
+            -ConfigOverride @{ ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayScanLog = $false }
+
+        $r.InputCount | Should -Be 1
+        $r.ProcessedCount | Should -Be 1
+        $r.Records[0].Url | Should -Be $url
+        $r.Records[0].Verdict | Should -Be 'Clean'
+        $r.Records[0].DefenderStatus | Should -Be 'Clean'
+        $r.DeployedCount | Should -Be 1
+        $r.DeployMissCount | Should -Be 1
+        Test-Path -LiteralPath (Join-Path $dest 'harvested.zip') | Should -BeTrue
+    }
+
+    It 'LocalAv Threat → Malicious hard gate, no deploy (HMD-026)' {
+        $work = Join-Path $TestDrive 'run-av-threat'
+        $input = Join-Path $TestDrive 'av-threat.txt'
+        $map = Join-Path $TestDrive 'av-threat-map.txt'
+        $dest = Join-Path $TestDrive 'av-threat-dest'
+        $url = 'https://mock.example/evil.bin'
+        $url | Set-Content -LiteralPath $input -Encoding utf8
+        @"
+@$dest
+evil.bin
+"@ | Set-Content -LiteralPath $map -Encoding utf8
+
+        $downloadInvoker = {
+            param($req)
+            $bytes = [Text.Encoding]::UTF8.GetBytes('evil-payload')
+            [IO.File]::WriteAllBytes($req.OutFile, $bytes)
+            [pscustomobject]@{ StatusCode = 200; ContentType = 'application/octet-stream'; Bytes = $bytes.Length }
+        }
+        $vtInvoker = {
+            param($req)
+            throw 'VT must not be called after LocalAv threat'
+        }
+        $avThreat = {
+            param($req)
+            [pscustomobject]@{ Status = 'Threat'; ThreatName = 'Test:EICAR'; Provider = 'Defender' }
+        }
+
+        $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
+        $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work -DeployMapPath $map `
+            -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
+            -LocalAvInvoker $avThreat -NoFileNamePrefix `
+            -ConfigOverride @{
+                ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false
+                DisplayScanLog = $false; QuarantineMalicious = $true
+            }
+
+        $r.Records[0].Verdict | Should -Be 'Malicious'
+        $r.Records[0].DefenderStatus | Should -Be 'Threat'
+        $r.Records[0].DefenderThreat | Should -Be 'Test:EICAR'
+        $r.DeployedCount | Should -Be 0
+        @(Get-ChildItem -LiteralPath (Join-Path $work 'Malicious')).Count | Should -Be 1
+        @(Get-ChildItem -LiteralPath (Join-Path $work 'Quarantine')).Count | Should -Be 1
+        Test-Path -LiteralPath (Join-Path $dest 'evil.bin') | Should -BeFalse
+    }
+
+    It 'LocalAv Unavailable → Error verdict (HMD-026)' {
+        $work = Join-Path $TestDrive 'run-av-unavail'
+        $input = Join-Path $TestDrive 'av-unavail.txt'
+        "https://mock.example/file.bin" | Set-Content -LiteralPath $input -Encoding utf8
+
+        $downloadInvoker = {
+            param($req)
+            $bytes = [Text.Encoding]::UTF8.GetBytes('file-payload')
+            [IO.File]::WriteAllBytes($req.OutFile, $bytes)
+            [pscustomobject]@{ StatusCode = 200; ContentType = 'application/octet-stream'; Bytes = $bytes.Length }
+        }
+        $vtInvoker = {
+            param($req)
+            throw 'VT must not be called after LocalAv Unavailable'
+        }
+        $avUnavail = {
+            param($req)
+            [pscustomobject]@{
+                Status = 'Unavailable'; ThreatName = ''; Provider = 'Defender'; Raw = 'no scanner'
+            }
+        }
+
+        $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
+        $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
+            -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
+            -LocalAvInvoker $avUnavail `
+            -ConfigOverride @{ ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayScanLog = $false }
+
+        $r.Records[0].Verdict | Should -Be 'Error'
+        $r.Records[0].DefenderStatus | Should -Be 'Unavailable'
+        @(Get-ChildItem -LiteralPath (Join-Path $work 'Error')).Count | Should -Be 1
+    }
+}
+
+Describe 'Get-HmdUrlsFromDeployMap and match keys (HMD-027)' {
+    It 'Test-HmdHttpUrl detects schemes' {
+        Test-HmdHttpUrl -Value 'https://a.example/x' | Should -BeTrue
+        Test-HmdHttpUrl -Value 'HTTP://a.example/x' | Should -BeTrue
+        Test-HmdHttpUrl -Value 'tool.exe' | Should -BeFalse
+    }
+
+    It 'harvests unique http(s) File entries in order' {
+        $rows = @(
+            [pscustomobject]@{ Destination = 'D:\a'; File = 'https://a.example/one.zip' }
+            [pscustomobject]@{ Destination = 'D:\a'; File = 'leaf.bin' }
+            [pscustomobject]@{ Destination = 'D:\b'; File = 'https://a.example/one.zip' }
+            [pscustomobject]@{ Destination = 'D:\b'; File = 'https://b.example/two.zip' }
+        )
+        $urls = @(Get-HmdUrlsFromDeployMap -MapRows $rows)
+        $urls.Count | Should -Be 2
+        $urls[0] | Should -Be 'https://a.example/one.zip'
+        $urls[1] | Should -Be 'https://b.example/two.zip'
+    }
+
+    It 'Get-HmdDeployMatchKeys includes full URL' {
+        $keys = @(Get-HmdDeployMatchKeys -FileName '0000_one.zip' -Url 'https://a.example/one.zip')
+        $keys | Should -Contain 'https://a.example/one.zip'
+        $keys | Should -Contain 'one.zip'
+        $keys | Should -Contain '0000_one.zip'
+    }
+
+    It 'Copy-HmdCleanDeploy matches full URL map entry' {
+        $work = Join-Path $TestDrive 'url-match-work'
+        $null = Initialize-HmdWorkRoot -WorkRoot $work
+        $cleanDir = Join-Path $work 'Clean'
+        $dest = Join-Path $TestDrive 'url-match-dest'
+        Set-Content -LiteralPath (Join-Path $cleanDir '0000_one.zip') -Value 'z' -Encoding utf8
+        $url = 'https://downloads.jee.com/example.zip'
+        $records = @(
+            [pscustomobject]@{
+                Verdict = 'Clean'; FileName = '0000_one.zip'; Url = $url
+                LocalPath = (Join-Path $cleanDir '0000_one.zip')
+            }
+        )
+        $map = @([pscustomobject]@{ Destination = $dest; File = $url })
+        $r = Copy-HmdCleanDeploy -Records $records -MapRows $map -WorkRoot $work
+        $r.DeployedCount | Should -Be 1
+        Test-Path -LiteralPath (Join-Path $dest 'example.zip') | Should -BeTrue
+    }
+}
+
+Describe 'Invoke-HmdLocalAvScan invoker (HMD-026)' {
+    It 'returns invoker Status/ThreatName' {
+        $tmp = Join-Path $TestDrive 'av-dummy.bin'
+        'x' | Set-Content -LiteralPath $tmp -Encoding utf8
+        $r = Invoke-HmdLocalAvScan -Path $tmp -Invoker {
+            param($req)
+            [pscustomobject]@{ Status = 'Threat'; ThreatName = 'X'; Provider = 'Defender' }
+        }
+        $r.Status | Should -Be 'Threat'
+        $r.ThreatName | Should -Be 'X'
     }
 }
 

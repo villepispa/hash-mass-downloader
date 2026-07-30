@@ -72,6 +72,10 @@ function Get-HmdHashReport {
             Suspicious = [int]$stats.suspicious
             Undetected = [int]$stats.undetected
             Harmless   = [int]$stats.harmless
+            Results    = $(if ($null -ne $resp.data.attributes.PSObject.Properties['last_analysis_results']) {
+                    $resp.data.attributes.last_analysis_results
+                }
+                else { $null })
             Raw        = $resp
             StatusCode = 200
         }
@@ -93,6 +97,7 @@ function Get-HmdHashReport {
                 Suspicious = 0
                 Undetected = 0
                 Harmless   = 0
+                Results    = $null
                 Raw        = $null
                 StatusCode = 404
             }
@@ -176,6 +181,10 @@ function Get-HmdAnalysis {
                 Suspicious = [int]$stats.suspicious
                 Undetected = [int]$stats.undetected
                 Harmless   = [int]$stats.harmless
+                Results    = $(if ($null -ne $resp.data.attributes.PSObject.Properties['results']) {
+                        $resp.data.attributes.results
+                    }
+                    else { $null })
                 Raw        = $resp
                 StatusCode = 200
             }

@@ -87,7 +87,11 @@ function New-HmdHtmlReport {
         $mal = [int]$r.Malicious
         $sus = [int]$r.Suspicious
         $sig = [System.Net.WebUtility]::HtmlEncode([string]$r.SignatureStatus)
-        "<tr><td>$url</td><td>$hash</td><td>$verdict</td><td>$mal</td><td>$sus</td><td>$sig</td></tr>"
+        $def = ''
+        if ($null -ne $r.PSObject.Properties['DefenderStatus']) {
+            $def = [System.Net.WebUtility]::HtmlEncode([string]$r.DefenderStatus)
+        }
+        "<tr><td>$url</td><td>$hash</td><td>$verdict</td><td>$mal</td><td>$sus</td><td>$sig</td><td>$def</td></tr>"
     }
 
     $html = @"
@@ -112,7 +116,7 @@ $($kpi -join "`n")
 </ul>
 <h2>Inventory</h2>
 <table>
-<thead><tr><th>URL</th><th>SHA256</th><th>Verdict</th><th>Malicious</th><th>Suspicious</th><th>Signature</th></tr></thead>
+<thead><tr><th>URL</th><th>SHA256</th><th>Verdict</th><th>Malicious</th><th>Suspicious</th><th>Signature</th><th>Defender</th></tr></thead>
 <tbody>
 $($rows -join "`n")
 </tbody>

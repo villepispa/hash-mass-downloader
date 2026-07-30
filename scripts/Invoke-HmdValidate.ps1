@@ -1,16 +1,19 @@
 #Requires -Version 7.2
 <#
 .SYNOPSIS
-  Repo-root validate gate: Pester then PSScriptAnalyzer.
+  Repo-root validate gate: version sync, Pester, then PSScriptAnalyzer.
 
 .DESCRIPTION
   **Safety tier: 1**
 
-  Ordered stages: Gallery dep check → Pester → ScriptAnalyzer.
+  Ordered stages: Gallery dep check → version sync → Pester → ScriptAnalyzer.
   Prefer this entry for agents and CI discovery.
 
 .PARAMETER SkipLint
   Skip PSScriptAnalyzer.
+
+.PARAMETER SkipVersionCheck
+  Skip Invoke-HmdBumpVersion -CheckOnly (ModuleVersion / UserAgent / Status).
 
 .PARAMETER AgentSummary
   One success-stream line: HMD-VALIDATE-OK | HMD-VALIDATE-FAIL stage=…
@@ -21,6 +24,7 @@
 [CmdletBinding()]
 param(
     [switch]$SkipLint,
+    [switch]$SkipVersionCheck,
     [switch]$AgentSummary
 )
 
@@ -30,6 +34,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $pesterScript = Join-Path $repoRoot 'tests\Invoke-HmdPester.ps1'
 $lintScript = Join-Path $PSScriptRoot 'Invoke-HmdScriptAnalyzer.ps1'
+$bumpScript = Join-Path $PSScriptRoot 'Invoke-HmdBumpVersion.ps1'
 
 $missing = @()
 $pester = Get-Module -ListAvailable -Name Pester |
@@ -46,6 +51,16 @@ if ($missing.Count -gt 0) {
         Write-Output ('HMD-VALIDATE-FAIL stage=deps exit=2 missing={0}' -f ($missing -join ','))
     }
     exit 2
+}
+
+if (-not $SkipVersionCheck) {
+    & $bumpScript -CheckOnly -AgentSummary:$AgentSummary
+    if ($LASTEXITCODE -ne 0) {
+        if ($AgentSummary) {
+            Write-Output ("HMD-VALIDATE-FAIL stage=version exit={0}" -f $LASTEXITCODE)
+        }
+        exit $LASTEXITCODE
+    }
 }
 
 & $pesterScript -AgentSummary

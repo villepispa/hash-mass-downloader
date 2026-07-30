@@ -169,10 +169,59 @@ function Get-HmdSafeFileName {
     return $candidate
 }
 
+function Test-HmdHttpUrl {
+    <#
+    .SYNOPSIS
+        True when the value looks like an http(s) URL (case-insensitive scheme).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+    return ($Value.Trim() -match '^https?://')
+}
+
+function Get-HmdUrlsFromDeployMap {
+    <#
+    .SYNOPSIS
+        Unique ordered http(s) URLs from deploy-map File entries (HMD-027 harvest).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]]$MapRows
+    )
+
+    $urls = [System.Collections.Generic.List[string]]::new()
+    $seen = @{}
+    foreach ($row in @($MapRows)) {
+        $file = [string]$row.File
+        if (-not (Test-HmdHttpUrl -Value $file)) {
+            continue
+        }
+        $u = $file.Trim()
+        if ($seen.ContainsKey($u)) {
+            continue
+        }
+        $seen[$u] = $true
+        $urls.Add($u)
+    }
+    return [string[]]$urls.ToArray()
+}
+
 function Get-HmdDeployMatchKeys {
     <#
     .SYNOPSIS
         Candidate keys for matching a scan record to a deploy-map File entry.
+    .DESCRIPTION
+        Keys: staged FileName, leaf without NNNN_ prefix, URL path leaf, and full
+        URL (HMD-027) when present.
     #>
     [CmdletBinding()]
     param(
@@ -194,6 +243,9 @@ function Get-HmdDeployMatchKeys {
         }
     }
     if (-not [string]::IsNullOrWhiteSpace($Url)) {
+        if (-not $keys.Contains($Url)) {
+            $keys.Add($Url)
+        }
         $urlLeaf = Get-HmdUrlLeafName -Url $Url -Index 0
         if (-not $keys.Contains($urlLeaf)) {
             $keys.Add($urlLeaf)

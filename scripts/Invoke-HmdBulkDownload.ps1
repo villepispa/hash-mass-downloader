@@ -11,9 +11,12 @@
   Post-run host summary/log display follows config/hmd.defaults.json
   (`DisplaySummary`, `DisplayScanLog`) unless -AgentSummary is set.
   Optional Clean deploy via -DeployMapPath (TXT sectioned map or CSV).
+  Deploy-map http(s) File entries are harvested into the download queue
+  (InputPath optional when the map has ≥1 URL). Local Defender scan is on
+  by default; use -SkipLocalAvScan to disable.
 
 .PARAMETER InputPath
-  TXT or CSV URL list.
+  TXT or CSV URL list. Optional when -DeployMapPath includes http(s) entries.
 
 .PARAMETER WorkRoot
   Output root (folders created under this path).
@@ -27,11 +30,15 @@
 .PARAMETER SkipVirusTotal
   Download and hash only (no VT API calls).
 
+.PARAMETER SkipLocalAvScan
+  Skip Microsoft Defender hard-gate scan (default on via LocalAvScanEnabled).
+
 .PARAMETER NoFileNamePrefix
   Store files as sanitized URL leaf (no NNNN_ prefix). Collisions get _Index.
 
 .PARAMETER DeployMapPath
   Optional TXT/CSV map of Clean files → destination folders (create if missing).
+  File entries may be names, wildcards, or http(s) URLs (harvested + matched).
 
 .PARAMETER AgentSummary
   One success-stream line for agents:
@@ -45,6 +52,11 @@
 
 .EXAMPLE
   pwsh -NoProfile -File .\scripts\Invoke-HmdBulkDownload.ps1 `
+    -DeployMapPath .\examples\deploy.sample.txt -WorkRoot .\out\run1 `
+    -SkipVirusTotal -SkipLocalAvScan
+
+.EXAMPLE
+  pwsh -NoProfile -File .\scripts\Invoke-HmdBulkDownload.ps1 `
     -InputPath .\examples\urls.sample.txt -WorkRoot .\out\run1 `
     -NoFileNamePrefix -DeployMapPath .\examples\deploy.sample.txt
 
@@ -54,7 +66,6 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)]
     [string]$InputPath,
 
     [Parameter(Mandatory)]
@@ -65,6 +76,8 @@ param(
     [switch]$UploadUnknownSamples,
 
     [switch]$SkipVirusTotal,
+
+    [switch]$SkipLocalAvScan,
 
     [switch]$NoFileNamePrefix,
 
@@ -81,11 +94,14 @@ $moduleManifest = Join-Path $repoRoot 'src\Hash.MassDownloader\Hash.MassDownload
 Import-Module $moduleManifest -Force
 
 $params = @{
-    InputPath        = $InputPath
     WorkRoot         = $WorkRoot
     SkipVirusTotal   = $SkipVirusTotal
+    SkipLocalAvScan  = $SkipLocalAvScan
     AgentSummary     = $AgentSummary
     NoFileNamePrefix = $NoFileNamePrefix
+}
+if (-not [string]::IsNullOrWhiteSpace($InputPath)) {
+    $params['InputPath'] = $InputPath
 }
 if ($PSBoundParameters.ContainsKey('ApiKey')) {
     $params['ApiKey'] = $ApiKey

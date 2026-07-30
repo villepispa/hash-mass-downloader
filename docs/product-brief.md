@@ -5,14 +5,14 @@ Comprehensive technical specification and design document for **Hash.MassDownloa
 
 **Host floor:** PowerShell 7.2+  
 **License:** MIT  
-**Status:** v0.1 MVP implements the core pipeline; roadmap items below are documented only.
+**Status:** v0.3.0 — core pipeline, Clean deploy (incl. map URLs), local Defender hard gate; remaining roadmap items below are documented only.
 
 ---
 
 ## Executive summary
 
 PowerShell-based bulk downloader with SHA256-first hash reputation triage
-(VirusTotal is the v0.1 provider; naming is scanner-agnostic for HMD-015),
+(VirusTotal is the current provider; naming is scanner-agnostic for HMD-015),
 optional file submission, quarantine handling, reporting, audit logging, and
 resume capabilities.
 
@@ -25,15 +25,38 @@ resume capabilities.
 
 ## Scope
 
-| In scope | Out of scope (v0.1) |
-|----------|---------------------|
-| TXT and CSV URL input | SQLite cache |
-| Parallel downloads (5–10) | Archive inspection (HPI/JPI/JAR) |
-| SHA256 calculation | SIEM integration |
-| VirusTotal API v3 (hash lookup; upload opt-in) | Scheduling |
-| Authenticode advisory validation | Enterprise reporting packs |
-| Quarantine workflows | Intune / PS 5.1 dual-host |
-| Logging, HTML reporting, resume | GitHub publish (operator choice) |
+### In scope (v0.3.0)
+
+| Capability | Notes |
+|------------|-------|
+| TXT and CSV URL input | Whitespace-split multi-URL lines |
+| Parallel downloads (5–10) | Config `DownloadThreads` |
+| SHA256 calculation | Per successful download |
+| VirusTotal API v3 | Hash lookup; upload opt-in |
+| Authenticode advisory validation | Non-blocking |
+| Local AV hard gate (Defender) | HMD-026; threat → Malicious; unavailable → Error |
+| Quarantine workflows | Config thresholds |
+| Logging, HTML reporting, resume | CSV + checkpoint |
+| Optional `NNNN_` filename prefix | HMD-018; `-NoFileNamePrefix` |
+| Clean deploy maps | TXT/CSV; `-like` wildcards (HMD-019/023) |
+| Deploy-map http(s) URLs | Harvest + full-URL match; optional InputPath (HMD-027) |
+| FP-aware VT verdict | Threshold + `IgnoreEngines`; raw counts + `IgnoredEngines` (HMD-025) |
+| Public GitHub repo + SemVer releases | Tags / GitHub Releases |
+
+### Out of scope (roadmap)
+
+| Capability | Tracking |
+|------------|----------|
+| SQLite hash cache | HMD-005 |
+| Archive inspection (HPI/JPI/JAR) | HMD-006 |
+| SIEM integration | HMD-007 |
+| Scheduling | HMD-007 |
+| Enterprise reporting packs | HMD-007 |
+| Intune / PS 5.1 dual-host | — |
+| Additional reputation providers | HMD-015 |
+| Clean-deploy dry-run | HMD-020 |
+| Deploy match by Sha256 column | HMD-021 (full URL as File: HMD-027) |
+| Deploy-map explicit rename | HMD-022 |
 
 ## Architecture overview
 
@@ -42,16 +65,21 @@ performs serialized VirusTotal operations to respect API quotas. Cache,
 checkpoint, and reporting services persist state.
 
 ```text
-Input (TXT/CSV)
+Input (TXT/CSV) + deploy-map http(s) harvest
     → Download pool (concurrent)
     → Downloaded/
-    → SHA256
-    → Hash cache (TTL) ──hit──→ Classify
+    → SHA256 + Authenticode
+    → Local AV (Defender) ──Threat──→ Malicious / Quarantine
+              │ Clean
+              ↓
+         Hash cache (TTL) ──hit──→ Classify
               │ miss
               ↓
          VT API (serialized)
               ↓
     Clean / Suspicious / Malicious / Quarantine / Unknown / Error
+              ↓
+    optional Clean deploy map
               ↓
     logs/*.csv + reports/report.html + checkpoint.json
 ```
@@ -59,22 +87,26 @@ Input (TXT/CSV)
 ## Functional requirements
 
 1. **Input handling** — TXT (one URL per line; whitespace-separated URLs on a
-   single line are split) and CSV (column `Url` or first column)
+   single line are split) and CSV (column `Url` or first column). Optional when
+   `-DeployMapPath` contains ≥1 `http(s)` File entry (HMD-027).
 2. **Retry logic** — transient HTTP failures; explicit handling for 404, 403, 429
 3. **Content-type validation** — soft check (warn / record; do not hard-fail by default)
 4. **Size limits** — skip or error when `Content-Length` or downloaded bytes exceed config
 5. **Hash calculation** — SHA256 of each successfully downloaded file
 6. **Duplicate detection** — same URL or same SHA256 within a run / cache
-7. **VT lookup** — SHA256-first `GET /api/v3/files/{hash}`
-8. **VT upload fallback** — when hash unknown and `-UploadUnknownSamples` enabled
-9. **Verdict classification** — from `last_analysis_stats` + policy thresholds
-10. **HTML reporting** — KPIs, detection summaries, file inventory
-11. **Resume support** — checkpoint after each processed URL; skip completed on restart
-12. **Optional filename prefix** — `NNNN_` index prefix on staged names (`PrefixFileNames`;
+7. **Local AV hard gate** — Microsoft Defender custom scan after download (HMD-026);
+   threat → Malicious (skip VT); scanner unavailable/error → Error; `-SkipLocalAvScan`
+   to opt out. MOTW alone is not relied on.
+8. **VT lookup** — SHA256-first `GET /api/v3/files/{hash}`
+9. **VT upload fallback** — when hash unknown and `-UploadUnknownSamples` enabled
+10. **Verdict classification** — from `last_analysis_stats` + policy thresholds
+11. **HTML reporting** — KPIs, detection summaries, file inventory
+12. **Resume support** — checkpoint after each processed URL; skip completed on restart
+13. **Optional filename prefix** — `NNNN_` index prefix on staged names (`PrefixFileNames`;
     `-NoFileNamePrefix` to use the URL leaf)
-13. **Clean deploy** — optional map-driven copy of Clean files to destinations
+14. **Clean deploy** — optional map-driven copy of Clean files to destinations
     (`-DeployMapPath`; create folders; keep `Clean/` as audit copy; `*` / `?`
-    wildcards expand to all matches)
+    wildcards expand to all matches; `http(s)` File entries harvest + full-URL match)
 
 ## Non-functional requirements
 
@@ -121,18 +153,83 @@ verdict is **Unknown** (not “zero engines scanned”).
 
 ### Verdict classification
 
-| Verdict | Rule (v0.1) |
+Policy counts feed the table below. With an empty `IgnoreEngines` list (default),
+policy counts equal VirusTotal’s `last_analysis_stats`. When engines are ignored,
+**scanlog / hashcache still store raw VT counts** in `Malicious` / `Suspicious` /
+`Undetected` / `Harmless`; the **Verdict** (and quarantine) uses policy counts.
+Applied ignores are recorded in `IgnoredEngines` (semicolon-separated).
+
+| Verdict | Rule |
 |---------|-------------|
-| **Malicious** | `Malicious >= MaliciousThreshold` (default 1) |
-| **Suspicious** | Else `Suspicious >= SuspiciousThreshold` (default 1) |
-| **Clean** | Else hash **known** on VT with zero malicious and zero suspicious (Undetected / Harmless may be &gt; 0) |
+| **Malicious** | Policy `Malicious >= MaliciousThreshold` (default 1) |
+| **Suspicious** | Else policy `Suspicious >= SuspiciousThreshold` (default 1) |
+| **Clean** | Else hash **known** on VT with zero policy malicious and zero policy suspicious (Undetected / Harmless may be &gt; 0) |
 | **Unknown** | Hash not found and upload disabled or upload/analysis failed |
 | **Error** | Download or processing failure (see `Error` field) |
+
+**Config knobs**
+
+| Key | Default | Role |
+|-----|---------|------|
+| `MaliciousThreshold` | `1` | Minimum policy malicious engines for **Malicious** |
+| `SuspiciousThreshold` | `1` | Minimum policy suspicious engines for **Suspicious** |
+| `IgnoreEngines` | `[]` | Case-insensitive VT engine names excluded from policy counts (needs `last_analysis_results` / analysis `results`; otherwise raw stats are used unchanged) |
 
 **Undetected does not drive the verdict** by itself. A high Undetected count with
 zero Malicious/Suspicious supports **Clean**; Undetected `0` with verdict
 **Unknown** usually means “no VT report,” not “all engines clean.”
 
+### Operator pitfall — URL report ≠ file report
+
+HMD never asks VirusTotal “is this URL bad?” It downloads the bytes, hashes them,
+and calls **`GET /api/v3/files/{sha256}`**. Disposition comes only from that
+**file** report’s `last_analysis_stats` (and optional per-engine
+`last_analysis_results` when `IgnoreEngines` is set).
+
+Operators (and auditors) often paste the download URL into VirusTotal’s
+search box. VT then opens a **URL** report (`/gui/url/…`), which uses a different
+engine set (web reputation / Safe Browsing / phishing feeds — often shown as
+**0 / 92** Clean). That page does **not** drive HMD, and file-only AV names such
+as **VirIT** typically do not appear there.
+
+| | URL report (browser paste) | File report (what HMD uses) |
+|--|----------------------------|-----------------------------|
+| VT UI path | `/gui/url/<id>/…` | `/gui/file/<sha256>/…` |
+| API | `GET /api/v3/urls/…` (not used by HMD) | `GET /api/v3/files/{sha256}` |
+| Engines | URL / site reputation (~90+) | File AV engines (~60–70 with a verdict) |
+| `scanlog` link | Do **not** use the input URL alone | Use column **`Sha256`** |
+
+**How to verify HMD’s verdict against the UI**
+
+1. Open `logs/scanlog.csv` for the row.
+2. Copy the **`Sha256`** value (lowercase hex).
+3. Open `https://www.virustotal.com/gui/file/<Sha256>/detection`.
+4. Compare the UI “N / M security vendors flagged…” line to
+   raw `Malicious` / `Suspicious` / `Undetected` on the CSV row. The HMD
+   **Verdict** may differ when `MaliciousThreshold` / `SuspiciousThreshold` /
+   `IgnoreEngines` change policy counts.
+
+### Operator pitfall — one noisy engine → Malicious
+
+Default **`MaliciousThreshold` is `1`**: any single file engine with category
+`malicious` yields verdict **Malicious** and (by default) a Quarantine copy.
+That is intentional for high-sensitivity triage; it also means well-known
+false positives quarantine legitimate packages.
+
+**Worked example (2026-07-30)** — Chrome for Testing
+`chromedriver-win64.zip` from
+`https://storage.googleapis.com/chrome-for-testing-public/151.0.7922.71/win64/chromedriver-win64.zip`:
+
+| Check | Result |
+|-------|--------|
+| Downloaded SHA-256 | `87368d15c1dffa5826f6d002a4440a20c9858bab09345a33d883912c2902b230` |
+| HMD `scanlog` (defaults) | `Verdict=Malicious`, raw `Malicious=1`, `Suspicious=0`, `Undetected=65` |
+| File UI | **1 / 66** — VirIT → `Win95.Marburg` (popular threat label `marburg/win95`) |
+| URL UI for the same link | **0 / 92** Clean — unrelated to HMD’s decision |
+| With `IgnoreEngines: ["VirIT"]` | raw counts unchanged; policy Malicious=0 → **Clean**; `IgnoredEngines=VirIT` |
+
+Operators may also raise `MaliciousThreshold` (for example `2` or `3`) in
+`config/hmd.defaults.json` or a config override. Both knobs can be combined.
 ## Download pipeline
 
 - Download 5–10 files concurrently (default from config)
@@ -187,12 +284,15 @@ and re-run, or process a different URL that yields the same SHA-256.
 | `LocalPath` | string | Final path after disposition (Clean / … / Error), or empty on early failure |
 | `Sha256` | string | Lowercase hex SHA-256 of the downloaded bytes; empty if download failed |
 | `Verdict` | string | `Clean` \| `Suspicious` \| `Malicious` \| `Unknown` \| `Error` |
-| `Malicious` | int | VT engines marking malicious (`0` if no VT report) |
-| `Suspicious` | int | VT engines marking suspicious (`0` if no VT report) |
-| `Undetected` | int | VT engines that scanned with **no** detection (`0` if no VT report) |
-| `Harmless` | int | VT engines that explicitly marked harmless (`0` if no VT report; older CSV rows without the column normalize to `0` on load) |
+| `Malicious` | int | **Raw** VT engines marking malicious (`0` if no VT report). Unchanged when engines are ignored — compare to VT UI. |
+| `Suspicious` | int | **Raw** VT engines marking suspicious (`0` if no VT report) |
+| `Undetected` | int | **Raw** VT engines that scanned with **no** detection (`0` if no VT report) |
+| `Harmless` | int | **Raw** VT engines that explicitly marked harmless (`0` if no VT report; older CSV rows without the column normalize to `0` on load) |
+| `IgnoredEngines` | string | Engines excluded from the **policy** counts that produced `Verdict` (semicolon-separated; empty when none applied). Older rows without the column normalize to empty. |
 | `SignatureStatus` | string | `Get-AuthenticodeSignature` status (advisory). Often `UnknownError` / not applicable for non-PE assets (`.ico`, raw `.bin`) |
 | `Signer` | string | Signer certificate subject when present; else empty |
+| `DefenderStatus` | string | Local AV result: `Clean` \| `Threat` \| `Unavailable` \| `Error` \| `Skipped` (empty on older rows) |
+| `DefenderThreat` | string | Threat name when `DefenderStatus=Threat`; else empty |
 | `ContentType` | string | HTTP Content-Type when observed (soft metadata) |
 | `Bytes` | long | Downloaded size in bytes |
 | `CacheHit` | bool | `True` only when **this processing pass** reused a fresh `hashcache.csv` entry instead of calling VT. `False` on first VT lookup/write. Unchanged historical rows in `scanlog.csv` keep their original value when a later run only resumes via checkpoint. |
@@ -204,13 +304,14 @@ and re-run, or process a different URL that yields the same SHA-256.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `Sha256` | string | Cache key (lowercase hex) |
-| `Verdict` | string | Cached disposition verdict |
-| `Malicious` | int | Cached VT malicious count |
-| `Suspicious` | int | Cached VT suspicious count |
-| `Undetected` | int | Cached VT undetected count |
-| `Harmless` | int | Cached VT harmless count |
+| `Verdict` | string | Cached **policy** disposition verdict (post-threshold / IgnoreEngines) |
+| `Malicious` | int | Cached **raw** VT malicious count |
+| `Suspicious` | int | Cached **raw** VT suspicious count |
+| `Undetected` | int | Cached **raw** VT undetected count |
+| `Harmless` | int | Cached **raw** VT harmless count |
+| `IgnoredEngines` | string | Engines applied to policy when the entry was written (semicolon-separated; empty if none). Fresh hits reuse the stored verdict; TTL refresh re-fetches VT and applies the **current** `IgnoreEngines` list. |
 | `CachedAt` | string | When the cache entry was written (ISO 8601) |
-| `Source` | string | Provenance of the cached verdict (v0.1: always `VirusTotal`). Extending the vocabulary is **HMD-015**. |
+| `Source` | string | Provenance of the cached verdict (currently always `VirusTotal`). Extending the vocabulary is **HMD-015**. |
 
 Entries older than `CacheTtlDays` are ignored and refreshed on next miss.
 
@@ -278,15 +379,19 @@ produce many rows; a miss produces one row for the pattern).
 | Section | Content |
 |---------|---------|
 | KPIs | Counts per verdict (`Clean`, `Suspicious`, `Malicious`, `Unknown`, `Error`) |
-| Inventory table | `URL`, `SHA256`, `Verdict`, `Malicious`, `Suspicious`, `Signature` (Authenticode status) |
+| Inventory table | `URL`, `SHA256`, `Verdict`, `Malicious`, `Suspicious`, `Signature`, `Defender` |
 
-HTML inventory currently emphasizes malicious/suspicious counts and signature
-status; full Undetected values remain in `scanlog.csv` / console `Records`.
+HTML inventory currently emphasizes malicious/suspicious counts, signature, and
+Defender status; full Undetected values remain in `scanlog.csv` / console `Records`.
 
 ## Security considerations
 
 - Quarantine **malicious** files (copy/move into `Quarantine/` and `Malicious/`)
 - Optionally quarantine **suspicious** (`QuarantineSuspicious`)
+- **Local Defender hard gate** before VT (HMD-026): threat → Malicious; scan
+  unavailable/error → Error (do not treat as Clean). MOTW may trigger OS
+  scanning but is **not** sufficient alone — HMD always requests an explicit scan
+  when `LocalAvScanEnabled` is true.
 - Validate Authenticode signatures (advisory; does not override VT malicious)
 - Preserve evidence under work-root folders; do not auto-delete
 
@@ -322,6 +427,9 @@ See [`config/hmd.defaults.json`](../config/hmd.defaults.json):
 | `DisplayScanLog` | Write `scanlog.csv` table to host after the run (default true) |
 | `PrefixFileNames` | Prefix staged names with `NNNN_` (default true); `-NoFileNamePrefix` forces false |
 | `DeployOverwrite` | When deploying Clean files, overwrite existing destination files (default true) |
+| `LocalAvScanEnabled` | Run Microsoft Defender custom scan after download (default true); `-SkipLocalAvScan` forces false |
+| `LocalAvProvider` | Local scanner id (currently `Defender` only) |
+| `IgnoreEngines` | VT engine names excluded from policy verdict counts (default `[]`) |
 | `MaxDownloadRetries` | Retry count for transient download errors |
 | `AnalysisPollSeconds` / `AnalysisPollMaxAttempts` | Upload analysis poll |
 
@@ -330,12 +438,15 @@ line (`HMD-RUN-OK …` / `HMD-RUN-FAIL …`) and turns off `DisplaySummary` /
 `DisplayScanLog` unless those keys are set in `ConfigOverride`.
 
 `-DeployMapPath` accepts a sectioned TXT (`@destination` then file names) or CSV
-(`Destination,File`). `File` may be exact or a wildcard. Wildcards use PowerShell
-**`-like`** (not regex): `*` = any sequence, `?` = one character; matching is
-case-insensitive. Examples: `*.pgi`, `file?.dll`. Only `*` / `?` enable glob mode
-(no `[a-z]` character classes). A glob copies **all** matching Clean files (one
-`deploy_copy.csv` row each). See `examples/deploy.sample.txt` / `.csv` and issues
-**HMD-019** / **HMD-023**.
+(`Destination,File`). `File` may be exact, a wildcard, or an `http(s)` URL.
+Wildcards use PowerShell **`-like`** (not regex): `*` = any sequence, `?` = one
+character; matching is case-insensitive. Examples: `*.pgi`, `file?.dll`. Only
+`*` / `?` enable glob mode (no `[a-z]` character classes). A glob copies **all**
+matching Clean files (one `deploy_copy.csv` row each). `http(s)` entries are
+**harvested** into the download queue and matched by full URL (dest leaf = URL
+path leaf). `-InputPath` may be omitted when the map has ≥1 such URL. See
+`examples/deploy.sample.txt` / `.csv` and issues **HMD-019** / **HMD-023** /
+**HMD-027**.
 
 ## Error handling matrix
 

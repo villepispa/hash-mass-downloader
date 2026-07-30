@@ -5,6 +5,7 @@
   "CacheTtlDays": 7,
   "MaliciousThreshold": 1,
   "SuspiciousThreshold": 1,
+  "IgnoreEngines": [],
   "QuarantineMalicious": true,
   "QuarantineSuspicious": false,
   "UploadUnknownSamples": false,
@@ -13,8 +14,10 @@
   "DisplayScanLog": true,
   "PrefixFileNames": true,
   "DeployOverwrite": true,
+  "LocalAvScanEnabled": true,
+  "LocalAvProvider": "Defender",
   "MaxDownloadRetries": 3,
   "AnalysisPollSeconds": 15,
   "AnalysisPollMaxAttempts": 20,
-  "UserAgent": "Hash.MassDownloader/0.1"
+  "UserAgent": "Hash.MassDownloader/0.3.0"
 }

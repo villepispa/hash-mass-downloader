@@ -1,6 +1,6 @@
 @{
     RootModule        = 'Hash.MassDownloader.psm1'
-    ModuleVersion     = '0.2.0'
+    ModuleVersion     = '0.3.0'
     GUID              = 'c8e4a1b2-7f3d-4a9e-b5c1-0d8e2f6a4b19'
     Author            = 'Ville Pispa'
     CompanyName       = 'Independent'
@@ -16,11 +16,16 @@
         'Get-HmdUrlLeafName'
         'Get-HmdSafeFileName'
         'Get-HmdDeployMatchKeys'
+        'Test-HmdHttpUrl'
+        'Get-HmdUrlsFromDeployMap'
+        'Invoke-HmdLocalAvScan'
         'Get-HmdFileSha256'
         'Test-HmdCacheEntryFresh'
         'Import-HmdHashCache'
         'Export-HmdHashCache'
         'Get-HmdVerdictFromStats'
+        'Get-HmdIgnoreEngineList'
+        'Get-HmdPolicyStatsFromResults'
         'Import-HmdCheckpoint'
         'Save-HmdCheckpoint'
         'Invoke-HmdRest'
@@ -41,7 +46,7 @@
             Tags         = @('Hash', 'Reputation', 'VirusTotal', 'Malware', 'Download', 'Security', 'PowerShell')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/villepispa/hash-mass-downloader'
-            ReleaseNotes = 'v0.2.0 — Clean deploy map (TXT/CSV, -like wildcards), optional leaf prefix, QueuedCount.'
+            ReleaseNotes = 'v0.3.0 — Defender hard-gate (HMD-026); deploy-map http(s) harvest (HMD-027).'
         }
     }
 }
