@@ -10,6 +10,7 @@
   API key from VIRUSTOTAL_API_KEY or -ApiKey. Sample upload is opt-in.
   Post-run host summary/log display follows config/hmd.defaults.json
   (`DisplaySummary`, `DisplayScanLog`) unless -AgentSummary is set.
+  Optional Clean deploy via -DeployMapPath (TXT sectioned map or CSV).
 
 .PARAMETER InputPath
   TXT or CSV URL list.
@@ -26,15 +27,26 @@
 .PARAMETER SkipVirusTotal
   Download and hash only (no VT API calls).
 
+.PARAMETER NoFileNamePrefix
+  Store files as sanitized URL leaf (no NNNN_ prefix). Collisions get _Index.
+
+.PARAMETER DeployMapPath
+  Optional TXT/CSV map of Clean files → destination folders (create if missing).
+
 .PARAMETER AgentSummary
   One success-stream line for agents:
-  HMD-RUN-OK input=N pending=N processed=N skipped=N clean=N … priorScanlog=0|1
+  HMD-RUN-OK input=N queued=N processed=N skipped=N clean=N … deploy=N priorScanlog=0|1
   Disables DisplaySummary/DisplayScanLog unless overridden via module ConfigOverride.
   Suppresses full JSON on the success stream.
 
 .EXAMPLE
   pwsh -NoProfile -File .\scripts\Invoke-HmdBulkDownload.ps1 `
     -InputPath .\examples\urls.sample.txt -WorkRoot .\out\run1 -SkipVirusTotal
+
+.EXAMPLE
+  pwsh -NoProfile -File .\scripts\Invoke-HmdBulkDownload.ps1 `
+    -InputPath .\examples\urls.sample.txt -WorkRoot .\out\run1 `
+    -NoFileNamePrefix -DeployMapPath .\examples\deploy.sample.txt
 
 .EXAMPLE
   pwsh -NoProfile -File .\scripts\Invoke-HmdBulkDownload.ps1 `
@@ -54,6 +66,10 @@ param(
 
     [switch]$SkipVirusTotal,
 
+    [switch]$NoFileNamePrefix,
+
+    [string]$DeployMapPath,
+
     [switch]$AgentSummary
 )
 
@@ -65,10 +81,11 @@ $moduleManifest = Join-Path $repoRoot 'src\Hash.MassDownloader\Hash.MassDownload
 Import-Module $moduleManifest -Force
 
 $params = @{
-    InputPath      = $InputPath
-    WorkRoot       = $WorkRoot
-    SkipVirusTotal = $SkipVirusTotal
-    AgentSummary   = $AgentSummary
+    InputPath        = $InputPath
+    WorkRoot         = $WorkRoot
+    SkipVirusTotal   = $SkipVirusTotal
+    AgentSummary     = $AgentSummary
+    NoFileNamePrefix = $NoFileNamePrefix
 }
 if ($PSBoundParameters.ContainsKey('ApiKey')) {
     $params['ApiKey'] = $ApiKey
@@ -76,14 +93,17 @@ if ($PSBoundParameters.ContainsKey('ApiKey')) {
 if ($UploadUnknownSamples) {
     $params['UploadUnknownSamples'] = $true
 }
+if (-not [string]::IsNullOrWhiteSpace($DeployMapPath)) {
+    $params['DeployMapPath'] = $DeployMapPath
+}
 
 try {
     $result = Invoke-HmdBulkDownload @params
     if ($AgentSummary) {
         Write-Output (
-            'HMD-RUN-OK input={0} pending={1} processed={2} skipped={3} clean={4} suspicious={5} malicious={6} unknown={7} error={8} priorScanlog={9}' -f `
+            'HMD-RUN-OK input={0} queued={1} processed={2} skipped={3} clean={4} suspicious={5} malicious={6} unknown={7} error={8} deploy={9} priorScanlog={10}' -f `
                 $result.InputCount,
-                $result.PendingCount,
+                $result.QueuedCount,
                 $result.ProcessedCount,
                 $result.SkippedByCheckpoint,
                 $result.CleanCount,
@@ -91,6 +111,7 @@ try {
                 $result.MaliciousCount,
                 $result.UnknownCount,
                 $result.ErrorCount,
+                $result.DeployedCount,
                 $(if ($result.RecordsArePriorScanlog) { '1' } else { '0' })
         )
         exit 0

@@ -1,0 +1,3 @@
+Destination,File
+out\deploy-demo\app1,favicon.ico
+out\deploy-demo\shared,*.ico

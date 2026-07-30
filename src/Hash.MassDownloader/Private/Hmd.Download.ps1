@@ -15,31 +15,27 @@ function Start-HmdDownloadPool {
         [int]$MaxFileBytes = 104857600,
         [int]$MaxRetries = 3,
         [string]$UserAgent = 'Hash.MassDownloader/0.1',
+        [bool]$PrefixFileNames = $true,
         [scriptblock]$DownloadInvoker
     )
 
     $downloadedDir = Join-Path $WorkRoot 'Downloaded'
     $indexPath = Join-Path $WorkRoot 'logs\download_index.csv'
 
-    function Get-SafeName {
-        param($Url, $Index)
-        try {
-            $uri = [Uri]$Url
-            $leaf = [IO.Path]::GetFileName($uri.AbsolutePath)
-        }
-        catch { $leaf = $null }
-        if ([string]::IsNullOrWhiteSpace($leaf)) { $leaf = "file_$Index.bin" }
-        foreach ($c in [IO.Path]::GetInvalidFileNameChars()) {
-            $leaf = $leaf.Replace([string]$c, '_')
-        }
-        if ($leaf.Length -gt 120) { $leaf = $leaf.Substring(0, 120) }
-        return "{0:D4}_{1}" -f $Index, $leaf
+    # Pre-assign unique names (needed when PrefixFileNames is false).
+    $occupied = @{}
+    $assignedNames = [string[]]::new($Urls.Count)
+    for ($i = 0; $i -lt $Urls.Count; $i++) {
+        $name = Get-HmdSafeFileName -Url $Urls[$i] -Index $i `
+            -PrefixFileNames $PrefixFileNames -OccupiedNames $occupied
+        $occupied[$name] = $true
+        $assignedNames[$i] = $name
     }
 
     function Invoke-OneDownload {
         param(
             [string]$Url,
-            [int]$Index,
+            [string]$FileName,
             [string]$DownloadedDir,
             [long]$MaxBytes,
             [int]$MaxRetries,
@@ -47,8 +43,7 @@ function Start-HmdDownloadPool {
             [scriptblock]$Invoker
         )
 
-        $fileName = Get-SafeName -Url $Url -Index $Index
-        $dest = Join-Path $DownloadedDir $fileName
+        $dest = Join-Path $DownloadedDir $FileName
         $attempt = 0
         $ok = $false
         $status = 0
@@ -134,7 +129,7 @@ function Start-HmdDownloadPool {
         return [pscustomobject]@{
             Url          = $Url
             LocalPath    = $(if ($ok) { $dest } else { $null })
-            FileName     = $fileName
+            FileName     = $FileName
             Success      = $ok
             StatusCode   = $status
             Attempts     = $attempt
@@ -149,7 +144,8 @@ function Start-HmdDownloadPool {
     # use sequential path for mocks / injected downloaders.
     if ($null -ne $DownloadInvoker) {
         $list = for ($i = 0; $i -lt $Urls.Count; $i++) {
-            Invoke-OneDownload -Url $Urls[$i] -Index $i -DownloadedDir $downloadedDir `
+            Invoke-OneDownload -Url $Urls[$i] -FileName $assignedNames[$i] `
+                -DownloadedDir $downloadedDir `
                 -MaxBytes $MaxFileBytes -MaxRetries $MaxRetries -UserAgent $UserAgent `
                 -Invoker $DownloadInvoker
         }
@@ -163,35 +159,19 @@ function Start-HmdDownloadPool {
 
     $results = [System.Collections.Concurrent.ConcurrentBag[object]]::new()
     $jobs = for ($i = 0; $i -lt $Urls.Count; $i++) {
-        [pscustomobject]@{ Index = $i; Url = $Urls[$i] }
+        [pscustomobject]@{ Index = $i; Url = $Urls[$i]; FileName = $assignedNames[$i] }
     }
 
     $jobs | ForEach-Object -ThrottleLimit $ThrottleLimit -Parallel {
         $item = $_
         $url = [string]$item.Url
-        $idx = [int]$item.Index
+        $fileName = [string]$item.FileName
         $downloadedDir = $using:downloadedDir
         $maxBytes = $using:MaxFileBytes
         $maxRetries = $using:MaxRetries
         $userAgent = $using:UserAgent
         $bag = $using:results
 
-        function Get-SafeNameLocal {
-            param($Url, $Index)
-            try {
-                $uri = [Uri]$Url
-                $leaf = [IO.Path]::GetFileName($uri.AbsolutePath)
-            }
-            catch { $leaf = $null }
-            if ([string]::IsNullOrWhiteSpace($leaf)) { $leaf = "file_$Index.bin" }
-            foreach ($c in [IO.Path]::GetInvalidFileNameChars()) {
-                $leaf = $leaf.Replace([string]$c, '_')
-            }
-            if ($leaf.Length -gt 120) { $leaf = $leaf.Substring(0, 120) }
-            return "{0:D4}_{1}" -f $Index, $leaf
-        }
-
-        $fileName = Get-SafeNameLocal -Url $url -Index $idx
         $dest = Join-Path $downloadedDir $fileName
         $attempt = 0
         $ok = $false

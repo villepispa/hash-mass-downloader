@@ -97,7 +97,11 @@ function Initialize-HmdWorkRoot {
     return (Resolve-Path -LiteralPath $WorkRoot).Path
 }
 
-function Get-HmdSafeFileName {
+function Get-HmdUrlLeafName {
+    <#
+    .SYNOPSIS
+        Sanitize the URL path leaf for use as a local file name (no index prefix).
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
@@ -123,5 +127,77 @@ function Get-HmdSafeFileName {
     if ($leaf.Length -gt 120) {
         $leaf = $leaf.Substring(0, 120)
     }
-    return "{0:D4}_{1}" -f $Index, $leaf
+    return $leaf
+}
+
+function Get-HmdSafeFileName {
+    <#
+    .SYNOPSIS
+        Build a staged download file name from a URL.
+    .DESCRIPTION
+        When -PrefixFileNames is set (default), returns NNNN_leaf. When off, returns
+        the sanitized leaf; pass -OccupiedNames to disambiguate collisions as
+        name_Index.ext.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Url,
+        [int]$Index = 0,
+        [bool]$PrefixFileNames = $true,
+        [System.Collections.IDictionary]$OccupiedNames
+    )
+
+    $leaf = Get-HmdUrlLeafName -Url $Url -Index $Index
+    if ($PrefixFileNames) {
+        return "{0:D4}_{1}" -f $Index, $leaf
+    }
+
+    $candidate = $leaf
+    if ($null -eq $OccupiedNames -or -not $OccupiedNames.ContainsKey($candidate)) {
+        return $candidate
+    }
+
+    $stem = [IO.Path]::GetFileNameWithoutExtension($leaf)
+    $ext = [IO.Path]::GetExtension($leaf)
+    $candidate = "{0}_{1}{2}" -f $stem, $Index, $ext
+    $n = 0
+    while ($OccupiedNames.ContainsKey($candidate)) {
+        $n++
+        $candidate = "{0}_{1}_{2}{3}" -f $stem, $Index, $n, $ext
+    }
+    return $candidate
+}
+
+function Get-HmdDeployMatchKeys {
+    <#
+    .SYNOPSIS
+        Candidate keys for matching a scan record to a deploy-map File entry.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$FileName,
+        [string]$Url = ''
+    )
+
+    $keys = [System.Collections.Generic.List[string]]::new()
+    foreach ($k in @($FileName)) {
+        if (-not [string]::IsNullOrWhiteSpace($k) -and -not $keys.Contains($k)) {
+            $keys.Add($k)
+        }
+    }
+    if ($FileName -match '^\d{4}_(.+)$') {
+        $stripped = $Matches[1]
+        if (-not $keys.Contains($stripped)) {
+            $keys.Add($stripped)
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Url)) {
+        $urlLeaf = Get-HmdUrlLeafName -Url $Url -Index 0
+        if (-not $keys.Contains($urlLeaf)) {
+            $keys.Add($urlLeaf)
+        }
+    }
+    return [string[]]$keys.ToArray()
 }

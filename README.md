@@ -2,7 +2,8 @@
 
 PowerShell 7.2+ bulk URL downloader with SHA256-first hash reputation
 (**VirusTotal** is the first provider), local hash cache, quarantine disposition,
-CSV audit logs, HTML reporting, and resume checkpoints.
+CSV audit logs, HTML reporting, resume checkpoints, optional leaf-name prefix,
+and post-Clean deploy maps (TXT/CSV with `-like` wildcards).
 
 **License:** [MIT](LICENSE) · **Spec:** [docs/product-brief.md](docs/product-brief.md)
 
@@ -38,11 +39,22 @@ Agent one-liner (suppresses host summary/scanlog table):
 ```powershell
 pwsh -NoProfile -File .\scripts\Invoke-HmdBulkDownload.ps1 `
   -InputPath .\examples\urls.sample.txt -WorkRoot .\out\run1 -AgentSummary
-# → HMD-RUN-OK input=… pending=… processed=… …
+# → HMD-RUN-OK input=… queued=… processed=… … deploy=…
+```
+
+Optional leaf names (no `NNNN_` prefix) + copy Clean files after triage
+(wildcards like `*.pgi` allowed in the deploy map):
+
+```powershell
+pwsh -NoProfile -File .\scripts\Invoke-HmdBulkDownload.ps1 `
+  -InputPath .\examples\urls.sample.txt -WorkRoot .\out\run1 `
+  -NoFileNamePrefix -DeployMapPath .\examples\deploy.sample.txt
 ```
 
 Post-run host display is controlled by `config/hmd.defaults.json`
 (`DisplaySummary`, `DisplayScanLog`; both default `true`).
+`PrefixFileNames` defaults to `true`; set false in config or pass
+`-NoFileNamePrefix`.
 
 ## Layout
 
@@ -55,6 +67,8 @@ Post-run host display is controlled by `config/hmd.defaults.json`
 | `scripts/Invoke-HmdBulkDownload.ps1` | Operator entry |
 | `scripts/Invoke-HmdValidate.ps1` | Pester + PSA gate |
 | `examples/urls.sample.txt` | Sample TXT input |
+| `examples/deploy.sample.txt` | Sample Clean-deploy map (sectioned TXT) |
+| `examples/deploy.sample.csv` | Sample Clean-deploy map (CSV) |
 
 ## Work root folders
 

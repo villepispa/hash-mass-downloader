@@ -1,0 +1,19 @@
+# Sample Clean-deploy map (TXT).
+# Lines starting with @ set the destination folder for following file names.
+# Comments (#) and blank lines are ignored.
+# Match File against staged FileName, leaf without NNNN_ prefix, or URL path leaf.
+# Wildcards use PowerShell -like (not regex): * = any sequence, ? = one character.
+# Case-insensitive. A glob copies all matching Clean files.
+#
+# @C:\Deploy\App1
+# program.exe
+#
+# @C:\Deploy\App1\Plugins
+# *.pgi
+
+# Relative destinations work too (resolved from the process working directory):
+@out\deploy-demo\app1
+favicon.ico
+
+@out\deploy-demo\shared
+*.ico

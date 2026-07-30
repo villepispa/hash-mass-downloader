@@ -28,12 +28,19 @@ function Invoke-HmdBulkDownload {
 
         [hashtable]$ConfigOverride = @{},
 
-        [switch]$AgentSummary
+        [switch]$AgentSummary,
+
+        [switch]$NoFileNamePrefix,
+
+        [string]$DeployMapPath
     )
 
     $cfg = Get-HmdConfig -Override $ConfigOverride
     if ($PSBoundParameters.ContainsKey('UploadUnknownSamples')) {
         $cfg.UploadUnknownSamples = [bool]$UploadUnknownSamples
+    }
+    if ($NoFileNamePrefix) {
+        $cfg.PrefixFileNames = $false
     }
     # Agent-friendly one-liner: keep host noise off unless explicitly overridden.
     if ($AgentSummary) {
@@ -57,13 +64,13 @@ function Invoke-HmdBulkDownload {
     # Pipeline-enumerated lists — @() is correct here (one object per URL/result).
     $allUrls = [string[]]@(Import-HmdUrlList -Path $InputPath)
 
-    $pendingList = [System.Collections.Generic.List[string]]::new()
+    $queuedList = [System.Collections.Generic.List[string]]::new()
     foreach ($u in $allUrls) {
         if (-not $completed.Contains([string]$u)) {
-            $pendingList.Add([string]$u)
+            $queuedList.Add([string]$u)
         }
     }
-    $pending = [string[]]$pendingList.ToArray()
+    $queued = [string[]]$queuedList.ToArray()
 
     $apiKeyPlain = $null
     if (-not $SkipVirusTotal) {
@@ -71,12 +78,13 @@ function Invoke-HmdBulkDownload {
     }
 
     $downloadResults = [object[]]@()
-    if ($pending.Count -gt 0) {
-        $downloadResults = @(Start-HmdDownloadPool -Urls $pending -WorkRoot $work `
+    if ($queued.Count -gt 0) {
+        $downloadResults = @(Start-HmdDownloadPool -Urls $queued -WorkRoot $work `
                 -ThrottleLimit ([int]$cfg.DownloadThreads) `
                 -MaxFileBytes ([long]$cfg.MaxFileBytes) `
                 -MaxRetries ([int]$cfg.MaxDownloadRetries) `
                 -UserAgent ([string]$cfg.UserAgent) `
+                -PrefixFileNames ([bool]$cfg.PrefixFileNames) `
                 -DownloadInvoker $DownloadInvoker)
         # Defensive: unwrap accidental one-level nest from older call patterns.
         $downloadResults = @(ConvertTo-HmdFlatArray -InputObject $downloadResults)
@@ -266,6 +274,22 @@ function Invoke-HmdBulkDownload {
         New-HmdHtmlReport -Records @($scanRecords) -Path $reportPath | Out-Null
     }
 
+    $deployedCount = 0
+    $deployMissCount = 0
+    $deployErrorCount = 0
+    $deploySkipCount = 0
+    $deployLog = $null
+    if (-not [string]::IsNullOrWhiteSpace($DeployMapPath)) {
+        $mapRows = @(Import-HmdDeployMap -Path $DeployMapPath)
+        $deploy = Copy-HmdCleanDeploy -Records @($scanRecords) -MapRows $mapRows `
+            -WorkRoot $work -Overwrite ([bool]$cfg.DeployOverwrite)
+        $deployedCount = [int]$deploy.DeployedCount
+        $deployMissCount = [int]$deploy.DeployMissCount
+        $deployErrorCount = [int]$deploy.DeployErrorCount
+        $deploySkipCount = [int]$deploy.DeploySkipCount
+        $deployLog = $deploy.DeployLogPath
+    }
+
     $errorCount = @($scanRecords | Where-Object { [string]$_.Verdict -eq 'Error' }).Count
     $malCount = @($scanRecords | Where-Object { [string]$_.Verdict -eq 'Malicious' }).Count
     $susCount = @($scanRecords | Where-Object { [string]$_.Verdict -eq 'Suspicious' }).Count
@@ -287,8 +311,8 @@ function Invoke-HmdBulkDownload {
     $summary = [pscustomobject]@{
         WorkRoot               = $work
         InputCount             = $allUrls.Count
-        PendingCount           = $pending.Count
-        SkippedByCheckpoint    = [Math]::Max(0, $allUrls.Count - $pending.Count)
+        QueuedCount            = $queued.Count
+        SkippedByCheckpoint    = [Math]::Max(0, $allUrls.Count - $queued.Count)
         ProcessedCount         = $downloadResults.Count
         CleanCount             = $cleanCount
         SuspiciousCount        = $susCount
@@ -297,6 +321,12 @@ function Invoke-HmdBulkDownload {
         ErrorCount             = $errorCount
         UndetectedSum          = $undetectedSum
         HarmlessSum            = $harmlessSum
+        DeployedCount          = $deployedCount
+        DeployMissCount        = $deployMissCount
+        DeployErrorCount       = $deployErrorCount
+        DeploySkipCount        = $deploySkipCount
+        DeployLog              = $deployLog
+        PrefixFileNames        = [bool]$cfg.PrefixFileNames
         ScanLog                = $scanPath
         HashCache              = $cachePath
         Report                 = $(if (Test-Path -LiteralPath $reportPath) { $reportPath } else { $null })
@@ -308,12 +338,20 @@ function Invoke-HmdBulkDownload {
         Write-Host ''
         Write-Host '=== Hash.MassDownloader summary ==='
         Write-Host ("WorkRoot:             {0}" -f $summary.WorkRoot)
-        Write-Host ("Input / Pending:      {0} / {1}" -f $summary.InputCount, $summary.PendingCount)
+        Write-Host ("Input / Queued:       {0} / {1}" -f $summary.InputCount, $summary.QueuedCount)
         Write-Host ("Skipped (checkpoint): {0}" -f $summary.SkippedByCheckpoint)
         Write-Host ("Processed this run:   {0}" -f $summary.ProcessedCount)
         Write-Host ("Verdicts (scanlog):   Clean={0} Suspicious={1} Malicious={2} Unknown={3} Error={4}" -f `
                 $cleanCount, $susCount, $malCount, $unknownCount, $errorCount)
         Write-Host ("VT engines (sum):     Undetected={0} Harmless={1}" -f $undetectedSum, $harmlessSum)
+        Write-Host ("Prefix file names:    {0}" -f $summary.PrefixFileNames)
+        if (-not [string]::IsNullOrWhiteSpace($DeployMapPath)) {
+            Write-Host ("Deploy:               copied={0} miss={1} error={2} skip={3}" -f `
+                    $deployedCount, $deployMissCount, $deployErrorCount, $deploySkipCount)
+            if ($summary.DeployLog) {
+                Write-Host ("DeployLog:            {0}" -f $summary.DeployLog)
+            }
+        }
         Write-Host ("Prior scanlog only:   {0}" -f $summary.RecordsArePriorScanlog)
         Write-Host ("ScanLog:              {0}" -f $summary.ScanLog)
         Write-Host ("HashCache:            {0}" -f $summary.HashCache)

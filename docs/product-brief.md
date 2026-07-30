@@ -70,6 +70,11 @@ Input (TXT/CSV)
 9. **Verdict classification** — from `last_analysis_stats` + policy thresholds
 10. **HTML reporting** — KPIs, detection summaries, file inventory
 11. **Resume support** — checkpoint after each processed URL; skip completed on restart
+12. **Optional filename prefix** — `NNNN_` index prefix on staged names (`PrefixFileNames`;
+    `-NoFileNamePrefix` to use the URL leaf)
+13. **Clean deploy** — optional map-driven copy of Clean files to destinations
+    (`-DeployMapPath`; create folders; keep `Clean/` as audit copy; `*` / `?`
+    wildcards expand to all matches)
 
 ## Non-functional requirements
 
@@ -153,7 +158,7 @@ Previously processed URLs are skipped on restart when the same `-WorkRoot` is us
 | **Hash cache** | `hashcache.csv` | VT verdict for a SHA-256 when a URL **is** processed again |
 
 A second run on the same `-WorkRoot` with the same input typically shows
-`PendingCount: 0`, `ProcessedCount: 0`, and `SkippedByCheckpoint: N`. Console
+`QueuedCount: 0`, `ProcessedCount: 0`, and `SkippedByCheckpoint: N`. Console
 `Records` are then **prior** `scanlog.csv` rows (`RecordsArePriorScanlog: true`),
 including whatever `CacheHit` was on the **original** processing pass (usually
 `False` because the first pass called VT and **wrote** the cache).
@@ -178,7 +183,7 @@ and re-run, or process a different URL that yields the same SHA-256.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `Url` | string | Source URL processed |
-| `FileName` | string | Staged name (`NNNN_` + leaf from URL path) |
+| `FileName` | string | Staged name: `NNNN_` + leaf when `PrefixFileNames` is true (default); else sanitized URL leaf (collision → `name_Index.ext`) |
 | `LocalPath` | string | Final path after disposition (Clean / … / Error), or empty on early failure |
 | `Sha256` | string | Lowercase hex SHA-256 of the downloaded bytes; empty if download failed |
 | `Verdict` | string | `Clean` \| `Suspicious` \| `Malicious` \| `Unknown` \| `Error` |
@@ -224,6 +229,21 @@ Entries older than `CacheTtlDays` are ignored and refreshed on next miss.
 | `Error` | string | Error text on failure |
 | `DownloadedAt` | string | ISO 8601 timestamp |
 
+### Field reference — `logs/deploy_copy.csv` (HMD-019)
+
+Written when `-DeployMapPath` is set. One row per **copy attempt** (a glob may
+produce many rows; a miss produces one row for the pattern).
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `File` | string | Map file key |
+| `Destination` | string | Destination folder from the map |
+| `SourcePath` | string | Path under `Clean/` (empty on miss) |
+| `DestPath` | string | Final copy path (empty on miss/error) |
+| `Status` | string | `Copied` \| `Miss` \| `Error` \| `SkippedExists` |
+| `Error` | string | Error text when applicable |
+| `CopiedAt` | string | ISO 8601 timestamp |
+
 ### Field reference — `checkpoint.json`
 
 | Field | Type | Meaning |
@@ -237,11 +257,14 @@ Entries older than `CacheTtlDays` are ignored and refreshed on next miss.
 |-------|------|---------|
 | `WorkRoot` | string | Absolute work-root path |
 | `InputCount` | int | Unique URLs parsed from input |
-| `PendingCount` | int | URLs not already in the checkpoint (will download/process this run) |
-| `SkippedByCheckpoint` | int | `InputCount - PendingCount` — URLs skipped by resume |
+| `QueuedCount` | int | URLs not already in the checkpoint at **start** of this run (download/process queue). Not “still unfinished after the run” — on a successful first pass it equals `InputCount` / `ProcessedCount` |
+| `SkippedByCheckpoint` | int | `InputCount - QueuedCount` — URLs skipped by resume |
 | `ProcessedCount` | int | Download results handled in this run (`0` if everything was checkpoint-skipped) |
 | `CleanCount` / `SuspiciousCount` / `MaliciousCount` / `UnknownCount` / `ErrorCount` | int | **Verdict** tallies over `Records` (`Verdict` column — not VT engine fields) |
 | `UndetectedSum` / `HarmlessSum` | int | Sum of per-record VT engine counts `Undetected` / `Harmless` over `Records` |
+| `DeployedCount` / `DeployMissCount` / `DeployErrorCount` / `DeploySkipCount` | int | Clean-deploy outcomes when `-DeployMapPath` is set (else `0`) |
+| `DeployLog` | string \| null | Path to `logs/deploy_copy.csv` when deploy ran |
+| `PrefixFileNames` | bool | Whether this run used the `NNNN_` staged-name prefix |
 | `RecordsArePriorScanlog` | bool | `True` when this run processed nothing but returned existing `scanlog.csv` rows |
 | `ScanLog` | string | Path to `scanlog.csv` |
 | `HashCache` | string | Path to `hashcache.csv` |
@@ -297,12 +320,22 @@ See [`config/hmd.defaults.json`](../config/hmd.defaults.json):
 | `GenerateReport` | HTML report on completion |
 | `DisplaySummary` | Write host summary block after the run (default true) |
 | `DisplayScanLog` | Write `scanlog.csv` table to host after the run (default true) |
+| `PrefixFileNames` | Prefix staged names with `NNNN_` (default true); `-NoFileNamePrefix` forces false |
+| `DeployOverwrite` | When deploying Clean files, overwrite existing destination files (default true) |
 | `MaxDownloadRetries` | Retry count for transient download errors |
 | `AnalysisPollSeconds` / `AnalysisPollMaxAttempts` | Upload analysis poll |
 
 `-AgentSummary` on `scripts/Invoke-HmdBulkDownload.ps1` emits one success-stream
 line (`HMD-RUN-OK …` / `HMD-RUN-FAIL …`) and turns off `DisplaySummary` /
 `DisplayScanLog` unless those keys are set in `ConfigOverride`.
+
+`-DeployMapPath` accepts a sectioned TXT (`@destination` then file names) or CSV
+(`Destination,File`). `File` may be exact or a wildcard. Wildcards use PowerShell
+**`-like`** (not regex): `*` = any sequence, `?` = one character; matching is
+case-insensitive. Examples: `*.pgi`, `file?.dll`. Only `*` / `?` enable glob mode
+(no `[a-z]` character classes). A glob copies **all** matching Clean files (one
+`deploy_copy.csv` row each). See `examples/deploy.sample.txt` / `.csv` and issues
+**HMD-019** / **HMD-023**.
 
 ## Error handling matrix
 

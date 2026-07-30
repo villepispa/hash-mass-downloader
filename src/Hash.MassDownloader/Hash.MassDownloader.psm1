@@ -13,7 +13,9 @@ Export-ModuleMember -Function @(
     'ConvertTo-HmdFlatArray'
     'Import-HmdUrlList'
     'Initialize-HmdWorkRoot'
+    'Get-HmdUrlLeafName'
     'Get-HmdSafeFileName'
+    'Get-HmdDeployMatchKeys'
     'Get-HmdFileSha256'
     'Test-HmdCacheEntryFresh'
     'Import-HmdHashCache'
@@ -29,5 +31,8 @@ Export-ModuleMember -Function @(
     'Get-HmdAuthenticodeInfo'
     'Move-HmdByVerdict'
     'New-HmdHtmlReport'
+    'Import-HmdDeployMap'
+    'Copy-HmdCleanDeploy'
+    'Test-HmdDeployPatternIsGlob'
     'Invoke-HmdBulkDownload'
 )

@@ -7,7 +7,29 @@ versioning aligns with [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
-_Nothing queued — latest release: **0.1.0**._
+_Nothing queued — latest release: **0.2.0**._
+
+## [0.2.0] - 2026-07-30
+
+### Added
+
+- Document deploy-map wildcards as PowerShell **`-like`** (`*` / `?`, not regex)
+  in issues, product brief, and sample map comments (`HMD-023`).
+- Deploy-map wildcards (`*` / `?`): e.g. `program.exe` → app folder and
+  `*.pgi` → plugins folder; expands to all Clean matches (`HMD-023`).
+- Backlog: Clean-deploy dry-run (`HMD-020`), Sha256/Url match (`HMD-021`),
+  explicit rename (`HMD-022`).
+- Optional staged-name prefix: config `PrefixFileNames` (default true) and
+  entry `-NoFileNamePrefix`; collision disambiguation without prefix (`HMD-018`).
+- Post-Clean deploy: `-DeployMapPath` sectioned TXT (`@dest` blocks) or CSV
+  (`Destination,File`); create missing folders; copy (keep `Clean/`);
+  `logs/deploy_copy.csv`; `DeployOverwrite` (`HMD-019`).
+
+### Changed
+
+- Rename summary field `PendingCount` → `QueuedCount` (start-of-run queue;
+  not leftover after a successful run); locals `$queued` / `$queuedList`;
+  host line `Input / Queued`; agent token `queued=` (`HMD-017`).
 
 ## [0.1.0] - 2026-07-29
 

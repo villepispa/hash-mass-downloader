@@ -11,6 +11,8 @@
   "GenerateReport": true,
   "DisplaySummary": true,
   "DisplayScanLog": true,
+  "PrefixFileNames": true,
+  "DeployOverwrite": true,
   "MaxDownloadRetries": 3,
   "AnalysisPollSeconds": 15,
   "AnalysisPollMaxAttempts": 20,

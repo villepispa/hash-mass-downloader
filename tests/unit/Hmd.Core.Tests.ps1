@@ -118,6 +118,129 @@ Describe 'ConvertTo-HmdFlatArray' {
     }
 }
 
+Describe 'Get-HmdSafeFileName' {
+    It 'prefixes by default' {
+        Get-HmdSafeFileName -Url 'https://mock.example/clean.bin' -Index 3 |
+            Should -Be '0003_clean.bin'
+    }
+
+    It 'omits prefix when PrefixFileNames is false' {
+        Get-HmdSafeFileName -Url 'https://mock.example/clean.bin' -Index 3 `
+            -PrefixFileNames $false |
+            Should -Be 'clean.bin'
+    }
+
+    It 'disambiguates collisions without prefix' {
+        $occ = @{ 'clean.bin' = $true }
+        Get-HmdSafeFileName -Url 'https://mock.example/clean.bin' -Index 2 `
+            -PrefixFileNames $false -OccupiedNames $occ |
+            Should -Be 'clean_2.bin'
+    }
+}
+
+Describe 'Import-HmdDeployMap' {
+    It 'parses sectioned TXT with @ destinations' {
+        $tmp = Join-Path $TestDrive 'deploy.txt'
+        @"
+# comment
+@C:\App1
+tool.exe
+helper.dll
+
+@D:\Bin
+tool.exe
+"@ | Set-Content -LiteralPath $tmp -Encoding utf8
+        $rows = @(Import-HmdDeployMap -Path $tmp)
+        $rows.Count | Should -Be 3
+        $rows[0].Destination | Should -Be 'C:\App1'
+        $rows[0].File | Should -Be 'tool.exe'
+        $rows[2].Destination | Should -Be 'D:\Bin'
+    }
+
+    It 'parses CSV Destination,File' {
+        $tmp = Join-Path $TestDrive 'deploy.csv'
+        @"
+Destination,File
+C:\App1,a.exe
+D:\Bin,b.exe
+"@ | Set-Content -LiteralPath $tmp -Encoding utf8
+        $rows = @(Import-HmdDeployMap -Path $tmp)
+        $rows.Count | Should -Be 2
+        $rows[1].File | Should -Be 'b.exe'
+    }
+}
+
+Describe 'Test-HmdDeployPatternIsGlob' {
+    It 'detects * and ?' {
+        Test-HmdDeployPatternIsGlob -Pattern '*.pgi' | Should -BeTrue
+        Test-HmdDeployPatternIsGlob -Pattern 'file?.dll' | Should -BeTrue
+        Test-HmdDeployPatternIsGlob -Pattern 'program.exe' | Should -BeFalse
+    }
+}
+
+Describe 'Copy-HmdCleanDeploy globs' {
+    It 'copies exact exe to one folder and *.pgi plugins to another' {
+        $work = Join-Path $TestDrive 'glob-work'
+        $null = Initialize-HmdWorkRoot -WorkRoot $work
+        $cleanDir = Join-Path $work 'Clean'
+        $appDir = Join-Path $TestDrive 'app'
+        $plugDir = Join-Path $TestDrive 'plugins'
+        Set-Content -LiteralPath (Join-Path $cleanDir 'program.exe') -Value 'exe' -Encoding utf8
+        Set-Content -LiteralPath (Join-Path $cleanDir 'a.pgi') -Value 'p1' -Encoding utf8
+        Set-Content -LiteralPath (Join-Path $cleanDir 'b.pgi') -Value 'p2' -Encoding utf8
+        Set-Content -LiteralPath (Join-Path $cleanDir 'readme.txt') -Value 'x' -Encoding utf8
+
+        $records = @(
+            [pscustomobject]@{
+                Verdict = 'Clean'; FileName = 'program.exe'; Url = 'https://mock.example/program.exe'
+                LocalPath = (Join-Path $cleanDir 'program.exe')
+            }
+            [pscustomobject]@{
+                Verdict = 'Clean'; FileName = 'a.pgi'; Url = 'https://mock.example/a.pgi'
+                LocalPath = (Join-Path $cleanDir 'a.pgi')
+            }
+            [pscustomobject]@{
+                Verdict = 'Clean'; FileName = 'b.pgi'; Url = 'https://mock.example/b.pgi'
+                LocalPath = (Join-Path $cleanDir 'b.pgi')
+            }
+            [pscustomobject]@{
+                Verdict = 'Clean'; FileName = 'readme.txt'; Url = 'https://mock.example/readme.txt'
+                LocalPath = (Join-Path $cleanDir 'readme.txt')
+            }
+        )
+        $map = @(
+            [pscustomobject]@{ Destination = $appDir; File = 'program.exe' }
+            [pscustomobject]@{ Destination = $plugDir; File = '*.pgi' }
+        )
+
+        $r = Copy-HmdCleanDeploy -Records $records -MapRows $map -WorkRoot $work
+        $r.DeployedCount | Should -Be 3
+        $r.DeployMissCount | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $appDir 'program.exe') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $plugDir 'a.pgi') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $plugDir 'b.pgi') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $plugDir 'readme.txt') | Should -BeFalse
+    }
+
+    It 'matches *.pgi against NNNN_ prefixed Clean names' {
+        $work = Join-Path $TestDrive 'glob-prefix'
+        $null = Initialize-HmdWorkRoot -WorkRoot $work
+        $cleanDir = Join-Path $work 'Clean'
+        $plugDir = Join-Path $TestDrive 'plugins-pfx'
+        Set-Content -LiteralPath (Join-Path $cleanDir '0002_plug.pgi') -Value 'p' -Encoding utf8
+        $records = @(
+            [pscustomobject]@{
+                Verdict = 'Clean'; FileName = '0002_plug.pgi'; Url = 'https://mock.example/plug.pgi'
+                LocalPath = (Join-Path $cleanDir '0002_plug.pgi')
+            }
+        )
+        $map = @([pscustomobject]@{ Destination = $plugDir; File = '*.pgi' })
+        $r = Copy-HmdCleanDeploy -Records $records -MapRows $map -WorkRoot $work
+        $r.DeployedCount | Should -Be 1
+        Test-Path -LiteralPath (Join-Path $plugDir 'plug.pgi') | Should -BeTrue
+    }
+}
+
 Describe 'Invoke-HmdBulkDownload with mocks' {
     It 'downloads, classifies Clean via mocked VT, and resumes' {
         $work = Join-Path $TestDrive 'run1'
@@ -177,8 +300,59 @@ Describe 'Invoke-HmdBulkDownload with mocks' {
         $r2 = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
             -ConfigOverride @{ ApiDelaySeconds = 0; DisplaySummary = $false; DisplayScanLog = $false }
-        $r2.PendingCount | Should -Be 0
+        $r2.QueuedCount | Should -Be 0
         $r2.ProcessedCount | Should -Be 0
+    }
+
+    It 'omits NNNN_ prefix and deploys Clean files from map' {
+        $work = Join-Path $TestDrive 'run-deploy'
+        $input = Join-Path $TestDrive 'deploy-in.txt'
+        $map = Join-Path $TestDrive 'deploy-map.txt'
+        $dest1 = Join-Path $TestDrive 'dest\app1'
+        $dest2 = Join-Path $TestDrive 'dest\shared'
+        "https://mock.example/tool.exe" | Set-Content -LiteralPath $input -Encoding utf8
+        @"
+@$dest1
+tool.exe
+
+@$dest2
+tool.exe
+"@ | Set-Content -LiteralPath $map -Encoding utf8
+
+        $downloadInvoker = {
+            param($req)
+            $bytes = [Text.Encoding]::UTF8.GetBytes('tool-payload')
+            [IO.File]::WriteAllBytes($req.OutFile, $bytes)
+            [pscustomobject]@{ StatusCode = 200; ContentType = 'application/octet-stream'; Bytes = $bytes.Length }
+        }
+        $vtInvoker = {
+            param($req)
+            return [pscustomobject]@{
+                data = [pscustomobject]@{
+                    attributes = [pscustomobject]@{
+                        last_analysis_stats = [pscustomobject]@{
+                            malicious = 0; suspicious = 0; undetected = 40; harmless = 10
+                        }
+                    }
+                }
+            }
+        }
+
+        $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
+        $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
+            -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
+            -NoFileNamePrefix -DeployMapPath $map `
+            -ConfigOverride @{ ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayScanLog = $false }
+
+        $r.Records[0].FileName | Should -Be 'tool.exe'
+        $r.PrefixFileNames | Should -BeFalse
+        $r.DeployedCount | Should -Be 2
+        $r.DeployMissCount | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $dest1 'tool.exe') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $dest2 'tool.exe') | Should -BeTrue
+        # Clean/ still holds the audit copy
+        Test-Path -LiteralPath (Join-Path $work 'Clean\tool.exe') | Should -BeTrue
+        Test-Path -LiteralPath $r.DeployLog | Should -BeTrue
     }
 
     It 'classifies Malicious and quarantines' {
@@ -255,3 +429,4 @@ https://mock.example/b.bin
         $r.Records[1].Verdict | Should -Be 'Clean'
     }
 }
+
