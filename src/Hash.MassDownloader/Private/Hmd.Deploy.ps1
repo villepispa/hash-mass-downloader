@@ -236,6 +236,7 @@ function Copy-HmdCleanDeploy {
     $results = [System.Collections.Generic.List[object]]::new()
     $clean = @($Records | Where-Object {
             [string]$_.Verdict -eq 'Clean' -and
+            -not (Test-HmdIsArchiveScanRow -FileName ([string]$_.FileName)) -and
             -not [string]::IsNullOrWhiteSpace([string]$_.LocalPath) -and
             (Test-Path -LiteralPath ([string]$_.LocalPath))
         })

@@ -7,6 +7,32 @@ versioning aligns with [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-31
+
+### Added
+
+- **HMD-045**: selective VT for interesting archive members —
+  `ArchiveVtMode` (`None`/`All`/`Interesting`); interest heuristics
+  (extension / path / MZ); `ArchiveInterestReason` scanlog column;
+  back-compat via `ArchiveContentsHashOnly`.
+- **HMD-006**: ZIP-family archive inspection (`.zip` / `.jar` / `.hpi` / `.jpi`);
+  `ArchiveInspectionEnabled` (default false); `ArchiveContentsHashOnly` (default
+  true); zip-slip-safe extract under `Inspected/`; `#archive/` scanlog rows;
+  optional member VT + worst-of roll-up when hash-only is false.
+- Roadmap backlog **HMD-028–HMD-044**: Phase 1 inbox watcher / Scheduled Task +
+  PS GUI; Phase 2 web + AD/Entra SSO + per-group path ACL; Phase 3 other IdPs
+  plus gap stories (secrets, mutex/inbox, job history, webhooks, egress,
+  air-gap, HA, K8s, Malicious-override, SCIM, Intune dual-host).
+  Issues + product-brief phased roadmap; OSS hub rows.
+- Pulse plan **OSS-021** / Phase 1 first slice (**HMD-028/034/035**):
+  `plans/2026-07-31_hmd-phase1-inbox-watcher_07452bed.plan.md` (GUI HMD-029
+  deferred).
+
+### Changed
+
+- ModuleVersion / UserAgent / Status → **0.4.0**.
+- Product brief **Scope** → v0.4.0 in-scope (archive inspection + selective VT).
+
 ## [0.3.0] - 2026-07-30
 
 ### Added

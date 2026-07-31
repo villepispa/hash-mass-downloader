@@ -5,7 +5,7 @@ Comprehensive technical specification and design document for **Hash.MassDownloa
 
 **Host floor:** PowerShell 7.2+  
 **License:** MIT  
-**Status:** v0.3.0 — core pipeline, Clean deploy (incl. map URLs), local Defender hard gate; remaining roadmap items below are documented only.
+**Status:** v0.4.0 — core pipeline, Clean deploy, Defender hard gate, opt-in ZIP-family archive inspection + selective member VT; remaining roadmap items below are documented only.
 
 ---
 
@@ -25,7 +25,7 @@ resume capabilities.
 
 ## Scope
 
-### In scope (v0.3.0)
+### In scope (v0.4.0)
 
 | Capability | Notes |
 |------------|-------|
@@ -41,6 +41,8 @@ resume capabilities.
 | Clean deploy maps | TXT/CSV; `-like` wildcards (HMD-019/023) |
 | Deploy-map http(s) URLs | Harvest + full-URL match; optional InputPath (HMD-027) |
 | FP-aware VT verdict | Threshold + `IgnoreEngines`; raw counts + `IgnoredEngines` (HMD-025) |
+| Archive inspection (ZIP/JAR/HPI/JPI) | HMD-006; opt-in; member hash-only by default |
+| Selective archive-member VT | HMD-045; `ArchiveVtMode=Interesting` |
 | Public GitHub repo + SemVer releases | Tags / GitHub Releases |
 
 ### Out of scope (roadmap)
@@ -48,11 +50,24 @@ resume capabilities.
 | Capability | Tracking |
 |------------|----------|
 | SQLite hash cache | HMD-005 |
-| Archive inspection (HPI/JPI/JAR) | HMD-006 |
-| SIEM integration | HMD-007 |
-| Scheduling | HMD-007 |
-| Enterprise reporting packs | HMD-007 |
-| Intune / PS 5.1 dual-host | — |
+| SIEM / enterprise reporting | HMD-007 |
+| Inbox watcher + serial queue + Scheduled Task | HMD-028 (Phase 1) |
+| PowerShell GUI for input | HMD-029 (Phase 1) |
+| Unattended secrets / service identity | HMD-034 |
+| Single-instance mutex + inbox lifecycle | HMD-035 |
+| Web front-end + modern back-end | HMD-030 (Phase 2) |
+| AD / Entra ID SSO access control | HMD-031 (Phase 2) |
+| Download/output folder ACL per AD group | HMD-032 (Phase 2) |
+| Other popular IdPs (Okta / Keycloak / …) | HMD-033 (Phase 3) |
+| Job history / retention / evidence export | HMD-036 |
+| Notifications / webhooks | HMD-037 |
+| Network egress allowlist / proxy | HMD-038 |
+| Air-gapped / offline reputation mode | HMD-039 |
+| HA multi-node workers | HMD-040 |
+| Container / Kubernetes packaging | HMD-041 |
+| Malicious-override approval workflow | HMD-042 |
+| SCIM provisioning | HMD-043 |
+| Intune / PS 5.1 dual-host | HMD-044 |
 | Additional reputation providers | HMD-015 |
 | Clean-deploy dry-run | HMD-020 |
 | Deploy match by Sha256 column | HMD-021 (full URL as File: HMD-027) |
@@ -76,6 +91,8 @@ Input (TXT/CSV) + deploy-map http(s) harvest
               │ miss
               ↓
          VT API (serialized)
+              ↓
+    optional archive inspect (HMD-006/045) → Inspected/ + #archive/ (+ selective VT)
               ↓
     Clean / Suspicious / Malicious / Quarantine / Unknown / Error
               ↓
@@ -107,6 +124,14 @@ Input (TXT/CSV) + deploy-map http(s) harvest
 14. **Clean deploy** — optional map-driven copy of Clean files to destinations
     (`-DeployMapPath`; create folders; keep `Clean/` as audit copy; `*` / `?`
     wildcards expand to all matches; `http(s)` File entries harvest + full-URL match)
+15. **Archive inspection** — optional ZIP-family (`.zip` / `.jar` / `.hpi` / `.jpi`)
+    member extract under `Inspected/` with zip-slip protection (HMD-006);
+    `ArchiveInspectionEnabled` (default false); `ArchiveVtMode` `None` \| `All` \|
+    `Interesting` (default `None`; `ArchiveContentsHashOnly` true/false maps to
+    None/All when mode unset); `Interesting` VTs high-risk members only (HMD-045)
+    and rolls up worst-of when any member VT runs
+16. **Selective member VT** — extension / path-keyword / optional MZ heuristics;
+    `ArchiveInterestReason` on `#archive/` scanlog rows (HMD-045)
 
 ## Non-functional requirements
 
@@ -280,7 +305,7 @@ and re-run, or process a different URL that yields the same SHA-256.
 | Field | Type | Meaning |
 |-------|------|---------|
 | `Url` | string | Source URL processed |
-| `FileName` | string | Staged name: `NNNN_` + leaf when `PrefixFileNames` is true (default); else sanitized URL leaf (collision → `name_Index.ext`) |
+| `FileName` | string | Staged name: `NNNN_` + leaf when `PrefixFileNames` is true (default); else sanitized URL leaf (collision → `name_Index.ext`). Archive members (HMD-006): `#archive/<entry>` — excluded from Clean deploy and summary KPIs |
 | `LocalPath` | string | Final path after disposition (Clean / … / Error), or empty on early failure |
 | `Sha256` | string | Lowercase hex SHA-256 of the downloaded bytes; empty if download failed |
 | `Verdict` | string | `Clean` \| `Suspicious` \| `Malicious` \| `Unknown` \| `Error` |
@@ -289,6 +314,7 @@ and re-run, or process a different URL that yields the same SHA-256.
 | `Undetected` | int | **Raw** VT engines that scanned with **no** detection (`0` if no VT report) |
 | `Harmless` | int | **Raw** VT engines that explicitly marked harmless (`0` if no VT report; older CSV rows without the column normalize to `0` on load) |
 | `IgnoredEngines` | string | Engines excluded from the **policy** counts that produced `Verdict` (semicolon-separated; empty when none applied). Older rows without the column normalize to empty. |
+| `ArchiveInterestReason` | string | Why an `#archive/` member was selected for VT under `ArchiveVtMode=Interesting` (e.g. `ext:.exe;path:bin/`; empty when not interesting / not archive) (HMD-045) |
 | `SignatureStatus` | string | `Get-AuthenticodeSignature` status (advisory). Often `UnknownError` / not applicable for non-PE assets (`.ico`, raw `.bin`) |
 | `Signer` | string | Signer certificate subject when present; else empty |
 | `DefenderStatus` | string | Local AV result: `Clean` \| `Threat` \| `Unavailable` \| `Error` \| `Skipped` (empty on older rows) |
@@ -429,6 +455,14 @@ See [`config/hmd.defaults.json`](../config/hmd.defaults.json):
 | `DeployOverwrite` | When deploying Clean files, overwrite existing destination files (default true) |
 | `LocalAvScanEnabled` | Run Microsoft Defender custom scan after download (default true); `-SkipLocalAvScan` forces false |
 | `LocalAvProvider` | Local scanner id (currently `Defender` only) |
+| `ArchiveInspectionEnabled` | Extract ZIP-family archives after container triage (default false) (HMD-006) |
+| `ArchiveContentsHashOnly` | Legacy: true→`ArchiveVtMode` None, false→All when `ArchiveVtMode` unset (default true) |
+| `ArchiveVtMode` | Member VT: `None` \| `All` \| `Interesting` (default `None`) (HMD-045) |
+| `ArchiveInterestingExtensions` | Extensions treated as interesting for selective VT |
+| `ArchiveInterestPathKeywords` | Path substrings (e.g. `bin/`) marking interesting members |
+| `ArchiveInterestCheckMz` | Treat MZ/PE magic as interesting (default true) |
+| `ArchiveMaxMembers` | Cap on file entries extracted per archive (default 500) |
+| `ArchiveExtensions` | Extensions treated as ZIP-family (default `.zip`/`.jar`/`.hpi`/`.jpi`) |
 | `IgnoreEngines` | VT engine names excluded from policy verdict counts (default `[]`) |
 | `MaxDownloadRetries` | Retry count for transient download errors |
 | `AnalysisPollSeconds` / `AnalysisPollMaxAttempts` | Upload analysis poll |
@@ -460,12 +494,35 @@ path leaf). `-InputPath` may be omitted when the map has ≥1 such URL. See
 
 ## Future roadmap
 
-- SQLite cache
-- Extend `hashcache.Source` vocabulary / alternate reputation providers (`HMD-015`)
-- Archive inspection for HPI/JPI/JAR
-- SIEM integration
-- Scheduling
-- Enterprise reporting
+### Phase 1 — unattended + desktop input
+
+- Inbox folder watcher, serial job queue, Windows Scheduled Task (`HMD-028`)
+- PowerShell GUI for supplying input files (`HMD-029`)
+- Unattended secrets / service identity (`HMD-034`); mutex + inbox lifecycle (`HMD-035`)
+
+### Phase 2 — web + directory ACL
+
+- Web front-end and modern back-end (`HMD-030`)
+- AD group and/or Entra ID SSO (`HMD-031`)
+- Allowed download locations and output folders per AD group (`HMD-032`)
+
+### Phase 3 — IdP breadth + ops gaps
+
+- Other popular IdPs (`HMD-033`); SCIM provisioning (`HMD-043`)
+- Job history / retention / evidence export (`HMD-036`)
+- Notifications / webhooks (`HMD-037`)
+- Network egress allowlist / proxy (`HMD-038`)
+- Air-gapped / offline reputation (`HMD-039`)
+- HA multi-node workers (`HMD-040`)
+- Container / Kubernetes packaging (`HMD-041`)
+- Malicious-override approval workflow (`HMD-042`)
+- Intune / PS 5.1 dual-host (`HMD-044`)
+
+### Other roadmap (unphased)
+
+- SQLite cache (`HMD-005`)
+- Extend `hashcache.Source` / alternate reputation providers (`HMD-015`)
+- SIEM / enterprise reporting (`HMD-007`)
 
 ## Related product artefacts
 

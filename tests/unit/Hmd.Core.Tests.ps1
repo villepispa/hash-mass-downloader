@@ -758,3 +758,346 @@ Describe 'Invoke-HmdLocalAvScan invoker (HMD-026)' {
     }
 }
 
+Describe 'Archive inspection helpers (HMD-006)' {
+    BeforeAll {
+        Add-Type -AssemblyName System.IO.Compression
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+    }
+
+    It 'Test-HmdIsArchivePath matches zip/jar/hpi/jpi' {
+        Test-HmdIsArchivePath -Path 'C:\x\plugin.hpi' | Should -BeTrue
+        Test-HmdIsArchivePath -Path 'C:\x\tool.JAR' | Should -BeTrue
+        Test-HmdIsArchivePath -Path 'C:\x\a.zip' | Should -BeTrue
+        Test-HmdIsArchivePath -Path 'C:\x\a.jpi' | Should -BeTrue
+        Test-HmdIsArchivePath -Path 'C:\x\a.exe' | Should -BeFalse
+    }
+
+    It 'Test-HmdIsArchiveScanRow detects #archive/ FileName' {
+        Test-HmdIsArchiveScanRow -FileName '#archive/lib/x.dll' | Should -BeTrue
+        Test-HmdIsArchiveScanRow -FileName '0000_tool.zip' | Should -BeFalse
+    }
+
+    It 'Get-HmdMergedVerdict picks worst' {
+        Get-HmdMergedVerdict -Verdicts @('Clean', 'Suspicious') | Should -Be 'Suspicious'
+        Get-HmdMergedVerdict -Verdicts @('Clean', 'Malicious', 'Error') | Should -Be 'Malicious'
+        Get-HmdMergedVerdict -Verdicts @('Unknown', 'Clean') | Should -Be 'Unknown'
+    }
+
+    It 'rejects zip-slip entries' {
+        $zip = Join-Path $TestDrive 'slip.zip'
+        $dest = Join-Path $TestDrive 'slip-out'
+        $null = New-Item -ItemType Directory -Force -Path $dest
+        if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+        $fs = [System.IO.File]::Open($zip, [System.IO.FileMode]::CreateNew)
+        try {
+            $za = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
+            try {
+                $e = $za.CreateEntry('../evil.txt')
+                $es = $e.Open()
+                try {
+                    $bytes = [Text.Encoding]::UTF8.GetBytes('evil')
+                    $es.Write($bytes, 0, $bytes.Length)
+                }
+                finally { $es.Dispose() }
+            }
+            finally { $za.Dispose() }
+        }
+        finally { $fs.Dispose() }
+
+        $r = Expand-HmdArchiveSafe -ArchivePath $zip -DestinationRoot $dest -MaxMembers 50
+        $r.Success | Should -BeFalse
+        $r.Error | Should -Match 'zip-slip|unsafe'
+    }
+
+    It 'hashes members without VT when HashOnly' {
+        $zip = Join-Path $TestDrive 'members.zip'
+        $work = Join-Path $TestDrive 'arch-work'
+        $null = Initialize-HmdWorkRoot -WorkRoot $work
+        if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+        $fs = [System.IO.File]::Open($zip, [System.IO.FileMode]::CreateNew)
+        try {
+            $za = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
+            try {
+                $e = $za.CreateEntry('inner/hello.txt')
+                $es = $e.Open()
+                try {
+                    $bytes = [Text.Encoding]::UTF8.GetBytes('hello-archive')
+                    $es.Write($bytes, 0, $bytes.Length)
+                }
+                finally { $es.Dispose() }
+            }
+            finally { $za.Dispose() }
+        }
+        finally { $fs.Dispose() }
+
+        $insp = Invoke-HmdArchiveInspect -ArchivePath $zip -WorkRoot $work `
+            -ParentFileName '0000_members.zip' -ParentSha256 'abc' -MaxMembers 50
+        $insp.Success | Should -BeTrue
+        $insp.Members.Count | Should -Be 1
+        $insp.Members[0].EntryName | Should -Be 'inner/hello.txt'
+        $insp.Members[0].Sha256 | Should -Match '^[0-9a-f]{64}$'
+        Test-Path -LiteralPath $insp.Members[0].LocalPath | Should -BeTrue
+    }
+
+    It 'Resolve-HmdArchiveVtMode maps HashOnly and explicit mode' {
+        Resolve-HmdArchiveVtMode -Config ([pscustomobject]@{ ArchiveContentsHashOnly = $true }) |
+            Should -Be 'None'
+        Resolve-HmdArchiveVtMode -Config ([pscustomobject]@{ ArchiveContentsHashOnly = $false }) |
+            Should -Be 'All'
+        Resolve-HmdArchiveVtMode -Config ([pscustomobject]@{
+                ArchiveVtMode = 'Interesting'; ArchiveContentsHashOnly = $true
+            }) | Should -Be 'Interesting'
+    }
+
+    It 'Get-HmdArchiveMemberInterest matches ext, path, mz' {
+        $txt = Get-HmdArchiveMemberInterest -EntryName 'docs/readme.txt' -CheckMz:$false
+        $txt.Interesting | Should -BeFalse
+
+        $exe = Get-HmdArchiveMemberInterest -EntryName 'tools/app.EXE' -CheckMz:$false
+        $exe.Interesting | Should -BeTrue
+        $exe.Reason | Should -Match 'ext:\.exe'
+
+        $pathHit = Get-HmdArchiveMemberInterest -EntryName 'plugins/note.md' -CheckMz:$false
+        $pathHit.Interesting | Should -BeTrue
+        $pathHit.Reason | Should -Match 'path:plugins/'
+
+        $mzPath = Join-Path $TestDrive 'fake.bin'
+        [IO.File]::WriteAllBytes($mzPath, [byte[]](0x4D, 0x5A, 0x90, 0x00))
+        $mz = Get-HmdArchiveMemberInterest -EntryName 'data/payload.bin' `
+            -LocalPath $mzPath -CheckMz:$true `
+            -InterestingExtensions @('.exe') -PathKeywords @('zzz/')
+        $mz.Interesting | Should -BeTrue
+        $mz.Reason | Should -Match 'mz'
+    }
+}
+
+Describe 'Invoke-HmdBulkDownload archive inspection (HMD-006)' {
+    It 'is off by default (no #archive rows)' {
+        $work = Join-Path $TestDrive 'arch-off'
+        $input = Join-Path $TestDrive 'arch-off-urls.txt'
+        $zip = Join-Path $TestDrive 'payload-off.zip'
+        if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+        Add-Type -AssemblyName System.IO.Compression
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $fs = [System.IO.File]::Open($zip, [System.IO.FileMode]::CreateNew)
+        try {
+            $za = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
+            try {
+                $e = $za.CreateEntry('a.txt')
+                $es = $e.Open()
+                try {
+                    $b = [Text.Encoding]::UTF8.GetBytes('x')
+                    $es.Write($b, 0, $b.Length)
+                }
+                finally { $es.Dispose() }
+            }
+            finally { $za.Dispose() }
+        }
+        finally { $fs.Dispose() }
+        'https://example.test/payload-off.zip' | Set-Content -LiteralPath $input -Encoding utf8
+
+        $downloadInvoker = {
+            param($req)
+            Copy-Item -LiteralPath $zip -Destination $req.OutFile -Force
+            [pscustomobject]@{
+                StatusCode  = 200
+                ContentType = 'application/zip'
+                Bytes       = (Get-Item -LiteralPath $req.OutFile).Length
+            }
+        }
+        $vtInvoker = {
+            param($req)
+            if ($req.Method -eq 'GET' -and $req.Uri -match '/files/') {
+                return [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{
+                                malicious = 0; suspicious = 0; undetected = 10; harmless = 0
+                            }
+                            last_analysis_results = [pscustomobject]@{}
+                        }
+                    }
+                }
+            }
+            throw "Unexpected VT call: $($req.Method) $($req.Uri)"
+        }
+        $avClean = {
+            param($req)
+            [pscustomobject]@{ Status = 'Clean'; ThreatName = ''; Provider = 'Defender'; Raw = '' }
+        }
+        $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
+        $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
+            -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
+            -LocalAvInvoker $avClean `
+            -ConfigOverride @{
+                ApiDelaySeconds = 0; GenerateReport = $false
+                DisplaySummary = $false; DisplayScanLog = $false
+                LocalAvScanEnabled = $true
+            }
+        @($r.Records | Where-Object { Test-HmdIsArchiveScanRow -FileName $_.FileName }).Count |
+            Should -Be 0
+    }
+
+    It 'when enabled + hash-only: emits #archive rows and does not VT members' {
+        $work = Join-Path $TestDrive 'arch-on'
+        $input = Join-Path $TestDrive 'arch-on-urls.txt'
+        $zip = Join-Path $TestDrive 'payload-on.zip'
+        if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+        Add-Type -AssemblyName System.IO.Compression
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $fs = [System.IO.File]::Open($zip, [System.IO.FileMode]::CreateNew)
+        try {
+            $za = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
+            try {
+                $e = $za.CreateEntry('nested/a.txt')
+                $es = $e.Open()
+                try {
+                    $b = [Text.Encoding]::UTF8.GetBytes('member-body')
+                    $es.Write($b, 0, $b.Length)
+                }
+                finally { $es.Dispose() }
+            }
+            finally { $za.Dispose() }
+        }
+        finally { $fs.Dispose() }
+        'https://example.test/payload-on.zip' | Set-Content -LiteralPath $input -Encoding utf8
+
+        $script:hmdArchiveVtCalls = 0
+        $downloadInvoker = {
+            param($req)
+            Copy-Item -LiteralPath $zip -Destination $req.OutFile -Force
+            [pscustomobject]@{
+                StatusCode  = 200
+                ContentType = 'application/zip'
+                Bytes       = (Get-Item -LiteralPath $req.OutFile).Length
+            }
+        }
+        $vtInvoker = {
+            param($req)
+            if ($req.Method -eq 'GET' -and $req.Uri -match '/files/') {
+                $script:hmdArchiveVtCalls++
+                return [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{
+                                malicious = 0; suspicious = 0; undetected = 10; harmless = 0
+                            }
+                            last_analysis_results = [pscustomobject]@{}
+                        }
+                    }
+                }
+            }
+            throw "Unexpected VT call: $($req.Method) $($req.Uri)"
+        }
+        $avClean = {
+            param($req)
+            [pscustomobject]@{ Status = 'Clean'; ThreatName = ''; Provider = 'Defender'; Raw = '' }
+        }
+        $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
+        $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
+            -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
+            -LocalAvInvoker $avClean `
+            -ConfigOverride @{
+                ApiDelaySeconds = 0; GenerateReport = $false
+                DisplaySummary = $false; DisplayScanLog = $false
+                ArchiveInspectionEnabled = $true
+                ArchiveContentsHashOnly = $true
+            }
+        $arch = @($r.Records | Where-Object { Test-HmdIsArchiveScanRow -FileName $_.FileName })
+        $arch.Count | Should -Be 1
+        $arch[0].FileName | Should -Be '#archive/nested/a.txt'
+        $arch[0].Verdict | Should -Be 'Unknown'
+        $arch[0].Sha256 | Should -Match '^[0-9a-f]{64}$'
+        # Only container hash lookup (one files/{sha} GET), not a second for the member.
+        $script:hmdArchiveVtCalls | Should -Be 1
+        $r.CleanCount | Should -Be 1
+    }
+}
+
+Describe 'Invoke-HmdBulkDownload selective archive VT (HMD-045)' {
+    It 'Interesting mode VTs exe member only' {
+        $work = Join-Path $TestDrive 'arch-interest'
+        $input = Join-Path $TestDrive 'arch-interest-urls.txt'
+        $zip = Join-Path $TestDrive 'payload-interest.zip'
+        if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+        Add-Type -AssemblyName System.IO.Compression
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $fs = [System.IO.File]::Open($zip, [System.IO.FileMode]::CreateNew)
+        try {
+            $za = New-Object System.IO.Compression.ZipArchive($fs, [System.IO.Compression.ZipArchiveMode]::Create)
+            try {
+                foreach ($pair in @(
+                        @{ Name = 'nested/readme.txt'; Body = 'boring' },
+                        @{ Name = 'bin/tool.exe'; Body = 'MZ-fake-exe' }
+                    )) {
+                    $e = $za.CreateEntry($pair.Name)
+                    $es = $e.Open()
+                    try {
+                        $b = [Text.Encoding]::UTF8.GetBytes($pair.Body)
+                        $es.Write($b, 0, $b.Length)
+                    }
+                    finally { $es.Dispose() }
+                }
+            }
+            finally { $za.Dispose() }
+        }
+        finally { $fs.Dispose() }
+        'https://example.test/payload-interest.zip' | Set-Content -LiteralPath $input -Encoding utf8
+
+        $script:hmdInterestVtHashes = [System.Collections.Generic.List[string]]::new()
+        $downloadInvoker = {
+            param($req)
+            Copy-Item -LiteralPath $zip -Destination $req.OutFile -Force
+            [pscustomobject]@{
+                StatusCode  = 200
+                ContentType = 'application/zip'
+                Bytes       = (Get-Item -LiteralPath $req.OutFile).Length
+            }
+        }
+        $vtInvoker = {
+            param($req)
+            if ($req.Method -eq 'GET' -and $req.Uri -match '/files/([0-9a-f]+)') {
+                $script:hmdInterestVtHashes.Add($Matches[1]) | Out-Null
+                return [pscustomobject]@{
+                    data = [pscustomobject]@{
+                        attributes = [pscustomobject]@{
+                            last_analysis_stats = [pscustomobject]@{
+                                malicious = 0; suspicious = 0; undetected = 10; harmless = 0
+                            }
+                            last_analysis_results = [pscustomobject]@{}
+                        }
+                    }
+                }
+            }
+            throw "Unexpected VT call: $($req.Method) $($req.Uri)"
+        }
+        $avClean = {
+            param($req)
+            [pscustomobject]@{ Status = 'Clean'; ThreatName = ''; Provider = 'Defender'; Raw = '' }
+        }
+        $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
+        $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
+            -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
+            -LocalAvInvoker $avClean `
+            -ConfigOverride @{
+                ApiDelaySeconds = 0; GenerateReport = $false
+                DisplaySummary = $false; DisplayScanLog = $false
+                ArchiveInspectionEnabled = $true
+                ArchiveVtMode = 'Interesting'
+                ArchiveContentsHashOnly = $true
+            }
+        $arch = @($r.Records | Where-Object { Test-HmdIsArchiveScanRow -FileName $_.FileName })
+        $arch.Count | Should -Be 2
+        $exeRow = $arch | Where-Object { $_.FileName -eq '#archive/bin/tool.exe' } | Select-Object -First 1
+        $txtRow = $arch | Where-Object { $_.FileName -eq '#archive/nested/readme.txt' } | Select-Object -First 1
+        $exeRow | Should -Not -BeNullOrEmpty
+        $txtRow | Should -Not -BeNullOrEmpty
+        $exeRow.ArchiveInterestReason | Should -Match 'ext:\.exe'
+        $txtRow.ArchiveInterestReason | Should -BeNullOrEmpty
+        # Container + interesting member only (not readme.txt).
+        $script:hmdInterestVtHashes.Count | Should -Be 2
+        $script:hmdInterestVtHashes | Should -Contain $exeRow.Sha256
+        $script:hmdInterestVtHashes | Should -Not -Contain $txtRow.Sha256
+    }
+}
+

@@ -9,6 +9,7 @@ function Invoke-HmdBulkDownload {
         checkpoint resume, quarantine policy, and HTML/CSV artefacts.
         Optional Clean deploy; deploy-map http(s) URLs are harvested into the
         download queue (HMD-027). Local Defender scan hard-gates threats (HMD-026).
+        Optional archive inspection for ZIP/JAR/HPI/JPI (HMD-006).
     #>
     [CmdletBinding()]
     param(
@@ -190,6 +191,7 @@ function Invoke-HmdBulkDownload {
             Error            = $dl.Error
             ProcessedAt      = (Get-Date).ToString('o')
         }
+        $archiveRows = [System.Collections.Generic.List[object]]::new()
 
         try {
             if (-not $dl.Success -or [string]::IsNullOrWhiteSpace($dl.LocalPath)) {
@@ -330,12 +332,203 @@ function Invoke-HmdBulkDownload {
             $record.Harmless = $harm
             $record.IgnoredEngines = $ignoredEngines
 
+            # HMD-006 / HMD-045: optional ZIP-family member hash / selective VT.
+            $archiveEnabled = $false
+            if ($null -ne $cfg.PSObject.Properties['ArchiveInspectionEnabled']) {
+                $archiveEnabled = [bool]$cfg.ArchiveInspectionEnabled
+            }
+            $archiveVtMode = Resolve-HmdArchiveVtMode -Config $cfg
+            $archiveMaxMembers = 500
+            if ($null -ne $cfg.PSObject.Properties['ArchiveMaxMembers'] -and
+                [int]$cfg.ArchiveMaxMembers -gt 0) {
+                $archiveMaxMembers = [int]$cfg.ArchiveMaxMembers
+            }
+            $archiveExts = @(Get-HmdDefaultArchiveExtensions)
+            if ($null -ne $cfg.PSObject.Properties['ArchiveExtensions'] -and
+                $null -ne $cfg.ArchiveExtensions) {
+                $archiveExts = @($cfg.ArchiveExtensions | ForEach-Object { [string]$_ } |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                if ($archiveExts.Count -eq 0) {
+                    $archiveExts = @(Get-HmdDefaultArchiveExtensions)
+                }
+            }
+            $interestExts = @(Get-HmdDefaultArchiveInterestingExtensions)
+            if ($null -ne $cfg.PSObject.Properties['ArchiveInterestingExtensions'] -and
+                $null -ne $cfg.ArchiveInterestingExtensions) {
+                $interestExts = @($cfg.ArchiveInterestingExtensions | ForEach-Object { [string]$_ } |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                if ($interestExts.Count -eq 0) {
+                    $interestExts = @(Get-HmdDefaultArchiveInterestingExtensions)
+                }
+            }
+            $interestKeys = @(Get-HmdDefaultArchiveInterestPathKeywords)
+            if ($null -ne $cfg.PSObject.Properties['ArchiveInterestPathKeywords'] -and
+                $null -ne $cfg.ArchiveInterestPathKeywords) {
+                $interestKeys = @($cfg.ArchiveInterestPathKeywords | ForEach-Object { [string]$_ } |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+                if ($interestKeys.Count -eq 0) {
+                    $interestKeys = @(Get-HmdDefaultArchiveInterestPathKeywords)
+                }
+            }
+            $interestCheckMz = $true
+            if ($null -ne $cfg.PSObject.Properties['ArchiveInterestCheckMz']) {
+                $interestCheckMz = [bool]$cfg.ArchiveInterestCheckMz
+            }
+
+            if ($archiveEnabled -and
+                -not [string]::IsNullOrWhiteSpace($dl.LocalPath) -and
+                (Test-Path -LiteralPath $dl.LocalPath) -and
+                (Test-HmdIsArchivePath -Path $dl.LocalPath -Extensions $archiveExts)) {
+                $insp = Invoke-HmdArchiveInspect -ArchivePath $dl.LocalPath -WorkRoot $work `
+                    -ParentFileName ([string]$dl.FileName) -ParentSha256 $sha `
+                    -MaxMembers $archiveMaxMembers -Extensions $archiveExts
+                if (-not $insp.Success) {
+                    $verdict = 'Error'
+                    $record.Verdict = $verdict
+                    $record.Error = [string]$insp.Error
+                }
+                else {
+                    $memberVerdicts = [System.Collections.Generic.List[string]]::new()
+                    $anyMemberVt = $false
+                    foreach ($m in @($insp.Members)) {
+                        $mVerdict = 'Unknown'
+                        $mMal = 0; $mSus = 0; $mUnd = 0; $mHarm = 0
+                        $mIgnored = ''
+                        $mErr = [string]$m.Error
+                        $mFromCache = $false
+                        $mInterestReason = ''
+                        $runMemberVt = $false
+                        if ($archiveVtMode -eq 'All') {
+                            $runMemberVt = $true
+                        }
+                        elseif ($archiveVtMode -eq 'Interesting') {
+                            $interest = Get-HmdArchiveMemberInterest -EntryName ([string]$m.EntryName) `
+                                -LocalPath ([string]$m.LocalPath) `
+                                -InterestingExtensions $interestExts `
+                                -PathKeywords $interestKeys `
+                                -CheckMz $interestCheckMz
+                            if ([bool]$interest.Interesting) {
+                                $runMemberVt = $true
+                                $mInterestReason = [string]$interest.Reason
+                            }
+                        }
+                        if (-not [string]::IsNullOrWhiteSpace($mErr)) {
+                            $mVerdict = 'Error'
+                        }
+                        elseif ($runMemberVt -and -not $SkipVirusTotal -and -not $skipVt -and
+                            -not [string]::IsNullOrWhiteSpace([string]$m.Sha256)) {
+                            $anyMemberVt = $true
+                            $mSha = [string]$m.Sha256
+                            if ($cache.ContainsKey($mSha) -and
+                                (Test-HmdCacheEntryFresh -CachedAt $cache[$mSha].CachedAt `
+                                    -TtlDays ([int]$cfg.CacheTtlDays))) {
+                                $mFromCache = $true
+                                $c = $cache[$mSha]
+                                $mVerdict = $c.Verdict
+                                $mMal = [int]$c.Malicious
+                                $mSus = [int]$c.Suspicious
+                                $mUnd = [int]$c.Undetected
+                                $mHarm = $(if ($null -ne $c.PSObject.Properties['Harmless']) {
+                                        [int]$c.Harmless
+                                    }
+                                    else { 0 })
+                                $mIgnored = $(if ($null -ne $c.PSObject.Properties['IgnoredEngines']) {
+                                        [string]$c.IgnoredEngines
+                                    }
+                                    else { '' })
+                            }
+                            else {
+                                $mReport = Get-HmdHashReport -Sha256 $mSha -ApiKey $apiKeyPlain `
+                                    -Invoker $VtInvoker -ApiDelaySeconds ([int]$cfg.ApiDelaySeconds)
+                                if ($mReport.Found) {
+                                    $mMal = [int]$mReport.Malicious
+                                    $mSus = [int]$mReport.Suspicious
+                                    $mUnd = [int]$mReport.Undetected
+                                    $mHarm = [int]$mReport.Harmless
+                                    $mPolicy = Get-HmdPolicyStatsFromResults -AnalysisResults $mReport.Results `
+                                        -IgnoreEngines $ignoreList `
+                                        -RawMalicious $mMal -RawSuspicious $mSus `
+                                        -RawUndetected $mUnd -RawHarmless $mHarm
+                                    $mVerdict = Get-HmdVerdictFromStats -Malicious $mPolicy.Malicious `
+                                        -Suspicious $mPolicy.Suspicious -Undetected $mPolicy.Undetected `
+                                        -MaliciousThreshold ([int]$cfg.MaliciousThreshold) `
+                                        -SuspiciousThreshold ([int]$cfg.SuspiciousThreshold) -Known
+                                    if ($mPolicy.IgnoredEngines.Count -gt 0) {
+                                        $mIgnored = ($mPolicy.IgnoredEngines -join ';')
+                                    }
+                                    $cache[$mSha] = [pscustomobject]@{
+                                        Sha256         = $mSha
+                                        Verdict        = $mVerdict
+                                        Malicious      = $mMal
+                                        Suspicious     = $mSus
+                                        Undetected     = $mUnd
+                                        Harmless       = $mHarm
+                                        IgnoredEngines = $mIgnored
+                                        CachedAt       = Get-Date
+                                        Source         = 'VirusTotal'
+                                    }
+                                    Export-HmdHashCache -Cache $cache -Path $cachePath
+                                }
+                                else {
+                                    $mVerdict = 'Unknown'
+                                }
+                            }
+                        }
+                        $memberVerdicts.Add($mVerdict) | Out-Null
+                        $errParts = [System.Collections.Generic.List[string]]::new()
+                        if (-not [string]::IsNullOrWhiteSpace($mErr)) {
+                            $errParts.Add($mErr) | Out-Null
+                        }
+                        else {
+                            $errParts.Add("ParentSha256=$sha") | Out-Null
+                            $errParts.Add("VtMode=$archiveVtMode") | Out-Null
+                            if ($archiveVtMode -eq 'None') {
+                                $errParts.Add('HashOnly=true') | Out-Null
+                            }
+                            if (-not [string]::IsNullOrWhiteSpace($mInterestReason)) {
+                                $errParts.Add("Interest=$mInterestReason") | Out-Null
+                            }
+                        }
+                        $archiveRows.Add([pscustomobject]@{
+                                Url                   = [string]$dl.Url
+                                FileName              = "#archive/$([string]$m.EntryName)"
+                                LocalPath             = [string]$m.LocalPath
+                                Sha256                = [string]$m.Sha256
+                                Verdict               = $mVerdict
+                                Malicious             = $mMal
+                                Suspicious            = $mSus
+                                Undetected            = $mUnd
+                                Harmless              = $mHarm
+                                IgnoredEngines        = $mIgnored
+                                ArchiveInterestReason = $mInterestReason
+                                SignatureStatus       = ''
+                                Signer                = ''
+                                DefenderStatus        = ''
+                                DefenderThreat        = ''
+                                ContentType           = 'archive-member'
+                                Bytes                 = [long]$m.Bytes
+                                CacheHit              = $mFromCache
+                                Error                 = ($errParts.ToArray() -join ';')
+                                ProcessedAt           = (Get-Date).ToString('o')
+                            }) | Out-Null
+                    }
+                    $shouldMerge = ($archiveVtMode -eq 'All') -or
+                        ($archiveVtMode -eq 'Interesting' -and $anyMemberVt)
+                    if ($shouldMerge -and $memberVerdicts.Count -gt 0) {
+                        $verdict = Get-HmdMergedVerdict -Verdicts @(
+                            @($verdict) + [string[]]$memberVerdicts.ToArray()
+                        )
+                        $record.Verdict = $verdict
+                    }
+                }
+            }
+
             $moved = Move-HmdByVerdict -SourcePath $dl.LocalPath -WorkRoot $work `
                 -Verdict $verdict `
                 -QuarantineMalicious ([bool]$cfg.QuarantineMalicious) `
                 -QuarantineSuspicious ([bool]$cfg.QuarantineSuspicious)
             $record.LocalPath = $moved.FinalPath
-            if (-not $skipVt) {
+            if (-not $skipVt -and $verdict -ne 'Error') {
                 $record.Error = ''
             }
         }
@@ -350,6 +543,13 @@ function Invoke-HmdBulkDownload {
         }
 
         $scanRecords.Add([pscustomobject]$record) | Out-Null
+        if ($null -ne $archiveRows) {
+            foreach ($ar in $archiveRows) {
+                if ($null -ne $ar) {
+                    $scanRecords.Add($ar) | Out-Null
+                }
+            }
+        }
         $null = $completed.Add([string]$dl.Url)
         Save-HmdCheckpoint -CompletedUrls $completed -Path $ckptPath
     }
@@ -371,6 +571,10 @@ function Invoke-HmdBulkDownload {
                             -not [string]::IsNullOrWhiteSpace([string]$_.Harmless)) { $_.Harmless } else { 0 })
                     IgnoredEngines  = $(if ($null -ne $_.PSObject.Properties['IgnoredEngines']) {
                             [string]$_.IgnoredEngines
+                        }
+                        else { '' })
+                    ArchiveInterestReason = $(if ($null -ne $_.PSObject.Properties['ArchiveInterestReason']) {
+                            [string]$_.ArchiveInterestReason
                         }
                         else { '' })
                     SignatureStatus = $_.SignatureStatus
@@ -412,14 +616,17 @@ function Invoke-HmdBulkDownload {
         $deployLog = $deploy.DeployLogPath
     }
 
-    $errorCount = @($scanRecords | Where-Object { [string]$_.Verdict -eq 'Error' }).Count
-    $malCount = @($scanRecords | Where-Object { [string]$_.Verdict -eq 'Malicious' }).Count
-    $susCount = @($scanRecords | Where-Object { [string]$_.Verdict -eq 'Suspicious' }).Count
-    $cleanCount = @($scanRecords | Where-Object { [string]$_.Verdict -eq 'Clean' }).Count
-    $unknownCount = @($scanRecords | Where-Object { [string]$_.Verdict -eq 'Unknown' }).Count
+    $topLevel = @($scanRecords | Where-Object {
+            -not (Test-HmdIsArchiveScanRow -FileName ([string]$_.FileName))
+        })
+    $errorCount = @($topLevel | Where-Object { [string]$_.Verdict -eq 'Error' }).Count
+    $malCount = @($topLevel | Where-Object { [string]$_.Verdict -eq 'Malicious' }).Count
+    $susCount = @($topLevel | Where-Object { [string]$_.Verdict -eq 'Suspicious' }).Count
+    $cleanCount = @($topLevel | Where-Object { [string]$_.Verdict -eq 'Clean' }).Count
+    $unknownCount = @($topLevel | Where-Object { [string]$_.Verdict -eq 'Unknown' }).Count
     $undetectedSum = 0
     $harmlessSum = 0
-    foreach ($rec in $scanRecords) {
+    foreach ($rec in $topLevel) {
         if ($null -ne $rec.PSObject.Properties['Undetected'] -and
             -not [string]::IsNullOrWhiteSpace([string]$rec.Undetected)) {
             $undetectedSum += [int]$rec.Undetected

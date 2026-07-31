@@ -3,8 +3,9 @@
 PowerShell 7.2+ bulk URL downloader with SHA256-first hash reputation
 (**VirusTotal** is the first provider), local hash cache, **Microsoft Defender
 hard-gate scan**, quarantine disposition, CSV audit logs, HTML reporting, resume
-checkpoints, optional leaf-name prefix, and post-Clean deploy maps (TXT/CSV with
-`-like` wildcards and optional `http(s)` File entries).
+checkpoints, optional leaf-name prefix, post-Clean deploy maps (TXT/CSV with
+`-like` wildcards and optional `http(s)` File entries), and **opt-in ZIP-family
+archive inspection** with selective member VT (`ArchiveVtMode`).
 
 **License:** [MIT](LICENSE) · **Spec:** [docs/product-brief.md](docs/product-brief.md) · **Release:** [docs/release.md](docs/release.md)
 
@@ -72,6 +73,10 @@ Post-run host display is controlled by `config/hmd.defaults.json`
 (`DisplaySummary`, `DisplayScanLog`; both default `true`).
 `PrefixFileNames` defaults to `true`; set false in config or pass
 `-NoFileNamePrefix`. `LocalAvScanEnabled` defaults to `true`.
+Archive inspection is **off** by default (`ArchiveInspectionEnabled`); when
+enabled, member VT defaults to **None** (`ArchiveVtMode` / hash-only). Set
+`ArchiveVtMode` to `Interesting` to VT high-risk members only, or `All` for
+every member.
 
 ## Layout
 

@@ -5,6 +5,8 @@ Human-readable disclosure trail for substantive AI-assisted work.
 | When | Phase / scope | Deliverable | Tool / model | Purpose | Verified by |
 |------|---------------|-------------|--------------|---------|-------------|
 <!-- AAI+ -->
+| 2026-07-31 08:55:58 | HMD-045 selective archive VT | ArchiveVtMode; interest helpers; pipeline; Pester 49; docs | Cursor Agent [Tier 2: composer-2.5-fast] | VT only high-risk archive members (quota); complements HMD-006 | Operator: `Invoke-HmdValidate.ps1` → HMD-VALIDATE-OK passed=49 |
+| 2026-07-31 07:23:31 | HMD-006 archive inspection | Hmd.Archive; pipeline wire; config; Pester 46; docs | Cursor Agent [Tier 2: composer-2.5-fast] | ZIP-family member hash (opt-in); hash-only default; zip-slip safe | Operator: `Invoke-HmdValidate.ps1` → HMD-VALIDATE-OK passed=46 |
 | 2026-07-30 23:15:38 | HMD-026/027 Defender + deploy URLs | LocalAv scan; map harvest; optional InputPath; v0.3.0; Pester 39 | Cursor Agent [Tier 2: composer-2.5-fast] | Explicit Defender hard-gate; fewer manual URL+map duplicates | Operator: `Invoke-HmdValidate.ps1` → HMD-VALIDATE-OK passed=39 |
 | 2026-07-30 23:02:35 | HMD-025 FP-aware VT verdict | IgnoreEngines; policy stats; IgnoredEngines CSV; Pester 31 | Cursor Agent [Tier 2: composer-2.5-fast] | Exclude noisy engines (e.g. VirIT) without rewriting raw VT tallies | Operator: `Invoke-HmdValidate.ps1` → HMD-PESTER-OK passed=31 |
 | 2026-07-30 22:33:00 | Document VT URL≠file + VirIT FP pitfalls | product-brief §§; README; issues HMD-025; CHANGELOG | Cursor Agent [Tier 3: composer-2.5-fast] | Prevent operator confusion: paste-URL Clean vs file Malicious | Operator: requested documentation |

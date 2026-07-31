@@ -88,7 +88,7 @@ function Initialize-HmdWorkRoot {
 
     $folders = @(
         'Downloaded', 'Clean', 'Suspicious', 'Malicious', 'Quarantine',
-        'Unknown', 'Error', 'logs', 'reports'
+        'Unknown', 'Error', 'Inspected', 'logs', 'reports'
     )
     $null = New-Item -ItemType Directory -Force -Path $WorkRoot
     foreach ($name in $folders) {

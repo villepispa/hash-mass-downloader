@@ -33,17 +33,23 @@ Historical section titles under `## [0.1.0]` in CHANGELOG / AAI rows stay as-is.
 2. **Edit CHANGELOG** — promote Unreleased notes into the new version section;
    leave a fresh empty `[Unreleased]` stub.
 
-3. **Validate**:
+3. **Move done release features in issues** — for each feature included in this
+   release that is still under `## Backlog` in [issues.md](issues.md), set
+   Status to `done` and **move the row** into the `## Done` table (newest first).
+   Leave remaining roadmap items under `## Backlog`.
+
+4. **Validate**:
 
    ```powershell
    pwsh -NoProfile -File .\scripts\Invoke-HmdValidate.ps1 -AgentSummary
    # → includes version sync (HMD-BUMP-CHECK-OK) then Pester + PSA
    ```
 
-4. **Commit** (Stream / VM) — include bumped files + CHANGELOG + any feature
-   work for the release. Commit message focuses on why (release X.Y.Z / fix …).
+5. **Commit** (Stream / VM) — include bumped files + CHANGELOG + issues Done
+   moves + any feature work for the release. Commit message focuses on why
+   (release X.Y.Z / fix …).
 
-5. **Tag + push** — annotated tag `vX.Y.Z` on the release commit; push `main`
+6. **Tag + push** — annotated tag `vX.Y.Z` on the release commit; push `main`
    and the tag; create GitHub Release from the tag notes / CHANGELOG section.
 
 ## Agent reminder
@@ -52,12 +58,14 @@ When the user asks to **release**, **tag**, or **publish**:
 
 1. Run `Invoke-HmdBumpVersion.ps1` for the target SemVer **first** (unless
    `-CheckOnly` already reports OK for that version).
-2. Then CHANGELOG promotion → validate → commit → tag → push → Release.
+2. Then CHANGELOG promotion → move done features to `## Done` in
+   [issues.md](issues.md) → validate → commit → tag → push → Release.
 
 Skipping step 1 is what left `UserAgent` at `/0.1` after the v0.2.0 ship.
 
 ## Related
 
 - Issue **HMD-024** (release version bump gate)
+- Issue register: [issues.md](issues.md) (`## Done` / `## Backlog`)
 - Entry validate: `scripts/Invoke-HmdValidate.ps1`
 - Spec: [product-brief.md](product-brief.md)

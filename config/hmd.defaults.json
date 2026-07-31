@@ -16,8 +16,19 @@
   "DeployOverwrite": true,
   "LocalAvScanEnabled": true,
   "LocalAvProvider": "Defender",
+  "ArchiveInspectionEnabled": false,
+  "ArchiveContentsHashOnly": true,
+  "ArchiveVtMode": "None",
+  "ArchiveInterestingExtensions": [
+    ".exe", ".dll", ".ps1", ".bat", ".cmd", ".vbs", ".js",
+    ".msi", ".scr", ".com", ".sys", ".jar", ".hpi", ".jpi"
+  ],
+  "ArchiveInterestPathKeywords": ["bin/", "lib/", "plugins/"],
+  "ArchiveInterestCheckMz": true,
+  "ArchiveMaxMembers": 500,
+  "ArchiveExtensions": [".zip", ".jar", ".hpi", ".jpi"],
   "MaxDownloadRetries": 3,
   "AnalysisPollSeconds": 15,
   "AnalysisPollMaxAttempts": 20,
-  "UserAgent": "Hash.MassDownloader/0.3.0"
+  "UserAgent": "Hash.MassDownloader/0.4.0"
 }
