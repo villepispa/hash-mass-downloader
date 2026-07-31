@@ -1,0 +1,7 @@
+# Inbox sample deploy sidecar — must be named urls.deploy.txt beside urls.txt
+# Same format as examples/deploy.sample.txt (sectioned @destination + files).
+@out\deploy-demo\app1
+favicon.ico
+
+@out\deploy-demo\shared
+*.ico

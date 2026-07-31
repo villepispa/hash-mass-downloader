@@ -5,7 +5,7 @@ Comprehensive technical specification and design document for **Hash.MassDownloa
 
 **Host floor:** PowerShell 7.2+  
 **License:** MIT  
-**Status:** v0.4.0 — core pipeline, Clean deploy, Defender hard gate, opt-in ZIP-family archive inspection + selective member VT; remaining roadmap items below are documented only.
+**Status:** v0.5.0 — core pipeline, Clean deploy, Defender hard gate, archive inspection, Phase 1 inbox worker + CredMan + mutex; remaining roadmap items below are documented only.
 
 ---
 
@@ -25,7 +25,7 @@ resume capabilities.
 
 ## Scope
 
-### In scope (v0.4.0)
+### In scope (v0.5.0)
 
 | Capability | Notes |
 |------------|-------|
@@ -43,6 +43,9 @@ resume capabilities.
 | FP-aware VT verdict | Threshold + `IgnoreEngines`; raw counts + `IgnoredEngines` (HMD-025) |
 | Archive inspection (ZIP/JAR/HPI/JPI) | HMD-006; opt-in; member hash-only by default |
 | Selective archive-member VT | HMD-045; `ArchiveVtMode=Interesting` |
+| Inbox serial worker + Scheduled Task | HMD-028; `incoming`→`processing`→`done`/`failed` |
+| CredMan / env / `-ApiKey` for VT key | HMD-034; default target `Hash.MassDownloader/VirusTotal` |
+| Single-instance inbox mutex | HMD-035; fail-closed when busy |
 | Public GitHub repo + SemVer releases | Tags / GitHub Releases |
 
 ### Out of scope (roadmap)
@@ -51,10 +54,7 @@ resume capabilities.
 |------------|----------|
 | SQLite hash cache | HMD-005 |
 | SIEM / enterprise reporting | HMD-007 |
-| Inbox watcher + serial queue + Scheduled Task | HMD-028 (Phase 1) |
 | PowerShell GUI for input | HMD-029 (Phase 1) |
-| Unattended secrets / service identity | HMD-034 |
-| Single-instance mutex + inbox lifecycle | HMD-035 |
 | Web front-end + modern back-end | HMD-030 (Phase 2) |
 | AD / Entra ID SSO access control | HMD-031 (Phase 2) |
 | Download/output folder ACL per AD group | HMD-032 (Phase 2) |
@@ -466,6 +466,10 @@ See [`config/hmd.defaults.json`](../config/hmd.defaults.json):
 | `IgnoreEngines` | VT engine names excluded from policy verdict counts (default `[]`) |
 | `MaxDownloadRetries` | Retry count for transient download errors |
 | `AnalysisPollSeconds` / `AnalysisPollMaxAttempts` | Upload analysis poll |
+| `InboxRoot` / `WorkRootBase` | Optional defaults for inbox worker paths (CLI still primary) |
+| `InboxMutexName` | Named mutex (default `Local\Hash.MassDownloader.Inbox`) |
+| `InboxMutexTimeoutMs` | Wait before fail-closed (default `0`) |
+| `ApiKeyCredentialTarget` | CredMan generic target (default `Hash.MassDownloader/VirusTotal`) |
 
 `-AgentSummary` on `scripts/Invoke-HmdBulkDownload.ps1` emits one success-stream
 line (`HMD-RUN-OK …` / `HMD-RUN-FAIL …`) and turns off `DisplaySummary` /
@@ -496,9 +500,9 @@ path leaf). `-InputPath` may be omitted when the map has ≥1 such URL. See
 
 ### Phase 1 — unattended + desktop input
 
-- Inbox folder watcher, serial job queue, Windows Scheduled Task (`HMD-028`)
-- PowerShell GUI for supplying input files (`HMD-029`)
-- Unattended secrets / service identity (`HMD-034`); mutex + inbox lifecycle (`HMD-035`)
+- Inbox serial worker + Windows Scheduled Task (`HMD-028`) — **done in v0.5.0**
+- Unattended secrets / CredMan (`HMD-034`); mutex + inbox lifecycle (`HMD-035`) — **done in v0.5.0**
+- PowerShell GUI for supplying input files (`HMD-029`) — still open
 
 ### Phase 2 — web + directory ACL
 

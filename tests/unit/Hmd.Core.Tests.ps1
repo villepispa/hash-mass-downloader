@@ -1101,3 +1101,191 @@ Describe 'Invoke-HmdBulkDownload selective archive VT (HMD-045)' {
     }
 }
 
+Describe 'Inbox lifecycle and mutex (HMD-035)' {
+    It 'creates inbox folders' {
+        $root = Join-Path $TestDrive 'inbox1'
+        $p = Initialize-HmdInbox -InboxRoot $root
+        (Test-Path -LiteralPath $p.Incoming) | Should -BeTrue
+        (Test-Path -LiteralPath $p.Processing) | Should -BeTrue
+        (Test-Path -LiteralPath $p.Done) | Should -BeTrue
+        (Test-Path -LiteralPath $p.Failed) | Should -BeTrue
+    }
+
+    It 'classifies input vs deploy sidecar names' {
+        Test-HmdInboxInputFileName -FileName 'urls.txt' | Should -BeTrue
+        Test-HmdInboxInputFileName -FileName 'urls.csv' | Should -BeTrue
+        Test-HmdInboxInputFileName -FileName 'urls.deploy.txt' | Should -BeFalse
+        Test-HmdInboxInputFileName -FileName 'urls.err.txt' | Should -BeFalse
+    }
+
+    It 'claims oldest job and optional deploy map' {
+        $root = Join-Path $TestDrive 'inbox2'
+        $p = Initialize-HmdInbox -InboxRoot $root
+        'https://a.example/x' | Set-Content -LiteralPath (Join-Path $p.Incoming 'job.txt') -Encoding utf8
+        '@C:\Deploy' | Set-Content -LiteralPath (Join-Path $p.Incoming 'job.deploy.txt') -Encoding utf8
+        $job = Get-HmdInboxNextJob -InboxRoot $root
+        $job | Should -Not -BeNullOrEmpty
+        $job.InputPath | Should -Match 'processing[\\/]job\.txt$'
+        $job.DeployMapPath | Should -Match 'processing[\\/]job\.deploy\.txt$'
+        ( @(Get-ChildItem -LiteralPath $p.Incoming -File -ErrorAction SilentlyContinue) ).Count | Should -Be 0
+    }
+
+    It 'resolves csv sidecar and prefers .deploy.txt over .deploy.csv' {
+        $dir = Join-Path $TestDrive 'sidecar-pref'
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $input = Join-Path $dir 'urls.csv'
+        'https://a.example/x' | Set-Content -LiteralPath $input -Encoding utf8
+        (Get-HmdInboxDeployMapPath -InputPath $input) | Should -BeNullOrEmpty
+        $csvSide = Join-Path $dir 'urls.deploy.csv'
+        'Destination,File' | Set-Content -LiteralPath $csvSide -Encoding utf8
+        (Get-HmdInboxDeployMapPath -InputPath $input) | Should -Be $csvSide
+        $txtSide = Join-Path $dir 'urls.deploy.txt'
+        '@C:\X' | Set-Content -LiteralPath $txtSide -Encoding utf8
+        (Get-HmdInboxDeployMapPath -InputPath $input) | Should -Be $txtSide
+    }
+
+    It 'ignores orphan deploy sidecar without matching input' {
+        $root = Join-Path $TestDrive 'inbox-orphan'
+        $p = Initialize-HmdInbox -InboxRoot $root
+        '@C:\Deploy' | Set-Content -LiteralPath (Join-Path $p.Incoming 'lonely.deploy.txt') -Encoding utf8
+        $job = Get-HmdInboxNextJob -InboxRoot $root
+        $job | Should -BeNullOrEmpty
+        (Test-Path -LiteralPath (Join-Path $p.Incoming 'lonely.deploy.txt')) | Should -BeTrue
+    }
+
+    It 'moves claimed job to done' {
+        $root = Join-Path $TestDrive 'inbox3'
+        $p = Initialize-HmdInbox -InboxRoot $root
+        'https://a.example/x' | Set-Content -LiteralPath (Join-Path $p.Incoming 'ok.txt') -Encoding utf8
+        $job = Get-HmdInboxNextJob -InboxRoot $root
+        $moved = Move-HmdInboxJob -InboxRoot $root -InputPath $job.InputPath -Disposition Done
+        $moved.Disposition | Should -Be 'Done'
+        (Test-Path -LiteralPath (Join-Path $p.Done 'ok.txt')) | Should -BeTrue
+    }
+
+    It 'writes .err.txt on failed disposition' {
+        $root = Join-Path $TestDrive 'inbox4'
+        $p = Initialize-HmdInbox -InboxRoot $root
+        'https://a.example/x' | Set-Content -LiteralPath (Join-Path $p.Incoming 'bad.txt') -Encoding utf8
+        $job = Get-HmdInboxNextJob -InboxRoot $root
+        $moved = Move-HmdInboxJob -InboxRoot $root -InputPath $job.InputPath `
+            -Disposition Failed -ErrorMessage 'boom'
+        (Test-Path -LiteralPath "$($moved.InputPath).err.txt") | Should -BeTrue
+        (Get-Content -LiteralPath "$($moved.InputPath).err.txt" -Raw).Trim() | Should -Be 'boom'
+    }
+
+    It 'fail-closed when mutex already held on another thread' {
+        $name = 'Local\Hmd.Pester.' + [guid]::NewGuid().ToString('N')
+        $rs = [runspacefactory]::CreateRunspace()
+        $rs.Open()
+        $ps = [powershell]::Create()
+        $ps.Runspace = $rs
+        $null = $ps.AddScript({
+                param($MutexName)
+                $createdNew = $false
+                $m = [System.Threading.Mutex]::new($false, $MutexName, [ref]$createdNew)
+                if (-not $m.WaitOne(0)) { throw 'holder failed to acquire' }
+                Start-Sleep -Seconds 15
+                $m.ReleaseMutex()
+                $m.Dispose()
+            }).AddArgument($name)
+        $async = $ps.BeginInvoke()
+        Start-Sleep -Milliseconds 300
+        try {
+            { Enter-HmdInboxMutex -Name $name -TimeoutMs 0 } | Should -Throw -ExpectedMessage '*mutex busy*'
+        }
+        finally {
+            try { $ps.Stop() } catch { }
+            $ps.Dispose()
+            $rs.Dispose()
+            if (-not $async.IsCompleted) {
+                # best-effort; holder exits on Stop
+            }
+        }
+    }
+}
+
+Describe 'Resolve-HmdApiKey order (HMD-034)' {
+    It 'prefers -ApiKey SecureString over env' {
+        $prev = $env:VIRUSTOTAL_API_KEY
+        try {
+            $env:VIRUSTOTAL_API_KEY = 'env-key-should-not-win'
+            $sec = ConvertTo-SecureString 'param-key' -AsPlainText -Force
+            Resolve-HmdApiKey -ApiKey $sec -SkipCredentialManager | Should -Be 'param-key'
+        }
+        finally {
+            $env:VIRUSTOTAL_API_KEY = $prev
+        }
+    }
+
+    It 'uses env when no ApiKey and CredMan skipped' {
+        $prev = $env:VIRUSTOTAL_API_KEY
+        try {
+            $env:VIRUSTOTAL_API_KEY = 'env-only-key'
+            Resolve-HmdApiKey -SkipCredentialManager | Should -Be 'env-only-key'
+        }
+        finally {
+            $env:VIRUSTOTAL_API_KEY = $prev
+        }
+    }
+}
+
+Describe 'Invoke-HmdInboxWorker (HMD-028)' {
+    It 'returns Idle when incoming is empty' {
+        $inbox = Join-Path $TestDrive 'worker-idle-inbox'
+        $jobs = Join-Path $TestDrive 'worker-idle-jobs'
+        $mutex = 'Local\Hmd.Pester.Idle.' + [guid]::NewGuid().ToString('N')
+        $r = Invoke-HmdInboxWorker -InboxRoot $inbox -WorkRootBase $jobs `
+            -MutexName $mutex -SkipVirusTotal -SkipLocalAvScan `
+            -BulkDownloadInvoker { throw 'should not run' }
+        $r.Status | Should -Be 'Idle'
+    }
+
+    It 'runs one mocked bulk job and moves to done' {
+        $inbox = Join-Path $TestDrive 'worker-run-inbox'
+        $jobs = Join-Path $TestDrive 'worker-run-jobs'
+        $mutex = 'Local\Hmd.Pester.Run.' + [guid]::NewGuid().ToString('N')
+        $null = Initialize-HmdInbox -InboxRoot $inbox
+        'https://a.example/x' | Set-Content -LiteralPath (Join-Path $inbox 'incoming\one.txt') -Encoding utf8
+        $fake = [pscustomobject]@{
+            InputCount = 1; QueuedCount = 1; ProcessedCount = 1
+            CleanCount = 1; ErrorCount = 0
+        }
+        $r = Invoke-HmdInboxWorker -InboxRoot $inbox -WorkRootBase $jobs `
+            -MutexName $mutex -SkipVirusTotal -SkipLocalAvScan `
+            -BulkDownloadInvoker { param($p) $fake }
+        $r.Status | Should -Be 'Done'
+        $r.WorkRoot | Should -Not -BeNullOrEmpty
+        (Test-Path -LiteralPath (Join-Path $inbox 'done\one.txt')) | Should -BeTrue
+        ( @(Get-ChildItem -LiteralPath (Join-Path $inbox 'incoming') -File -ErrorAction SilentlyContinue) ).Count |
+            Should -Be 0
+    }
+
+    It 'passes deploy sidecar as DeployMapPath and moves both to done' {
+        $inbox = Join-Path $TestDrive 'worker-side-inbox'
+        $jobs = Join-Path $TestDrive 'worker-side-jobs'
+        $mutex = 'Local\Hmd.Pester.Side.' + [guid]::NewGuid().ToString('N')
+        $null = Initialize-HmdInbox -InboxRoot $inbox
+        'https://a.example/x' | Set-Content -LiteralPath (Join-Path $inbox 'incoming\urls.txt') -Encoding utf8
+        '@C:\Deploy' | Set-Content -LiteralPath (Join-Path $inbox 'incoming\urls.deploy.txt') -Encoding utf8
+        $script:hmdSeenDeploy = $null
+        $fake = [pscustomobject]@{
+            InputCount = 1; QueuedCount = 1; ProcessedCount = 1
+            CleanCount = 1; ErrorCount = 0; DeployedCount = 1
+        }
+        $r = Invoke-HmdInboxWorker -InboxRoot $inbox -WorkRootBase $jobs `
+            -MutexName $mutex -SkipVirusTotal -SkipLocalAvScan `
+            -BulkDownloadInvoker {
+                param($p)
+                $script:hmdSeenDeploy = $p['DeployMapPath']
+                $fake
+            }
+        $r.Status | Should -Be 'Done'
+        $script:hmdSeenDeploy | Should -Match 'urls\.deploy\.txt$'
+        $r.DeployMapPath | Should -Match 'urls\.deploy\.txt$'
+        (Test-Path -LiteralPath (Join-Path $inbox 'done\urls.txt')) | Should -BeTrue
+        (Test-Path -LiteralPath (Join-Path $inbox 'done\urls.deploy.txt')) | Should -BeTrue
+        (Test-Path -LiteralPath (Join-Path $inbox 'incoming\urls.deploy.txt')) | Should -BeFalse
+    }
+}
+

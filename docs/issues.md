@@ -9,6 +9,9 @@ items here from **Backlog** (see [release.md](release.md)).
 
 | ID | Title | Status | Notes |
 |----|-------|--------|-------|
+| HMD-028 | Inbox worker + Scheduled Task | done | v0.5.0; `Invoke-HmdInboxWorker`; Plan `07452bed` |
+| HMD-034 | Unattended secrets / CredMan API key | done | v0.5.0; target `Hash.MassDownloader/VirusTotal` |
+| HMD-035 | Single-instance mutex + inbox lifecycle | done | v0.5.0; Plan `07452bed` |
 | HMD-045 | Selective VT for interesting archive members | done | ArchiveVtMode Interesting; see notes |
 | HMD-006 | Archive inspection (HPI/JPI/JAR) | done | ZIP-family; hash-only default; see notes |
 | HMD-027 | Deploy-map http(s) URLs: harvest + full-URL match | done | Optional InputPath when map has ≥1 URL |
@@ -41,14 +44,11 @@ items here from **Backlog** (see [release.md](release.md)).
 | HMD-038 | Network egress allowlist / proxy policy | backlog | Phase 3 gap; see notes |
 | HMD-037 | Notifications / webhooks on job complete | backlog | Phase 3 gap; see notes |
 | HMD-036 | Job history, retention, evidence export | backlog | Phase 3 gap; see notes |
-| HMD-035 | Single-instance mutex + inbox lifecycle | backlog | Phase 1 companion to HMD-028; Plan: `plans/2026-07-31_hmd-phase1-inbox-watcher_07452bed.plan.md` |
-| HMD-034 | Unattended secrets / service identity | backlog | Phase 1 companion (CredMan / MI); Plan: `plans/2026-07-31_hmd-phase1-inbox-watcher_07452bed.plan.md` |
 | HMD-033 | Access control — other popular IdPs | backlog | Phase 3; Okta / Keycloak / Auth0 / …; see notes |
 | HMD-032 | Allowed download locations + output folders per AD group | backlog | Phase 2; path ACL by group; see notes |
 | HMD-031 | Access control — AD group and/or Entra ID (SSO) | backlog | Phase 2; see notes |
 | HMD-030 | Web front-end + modern back-end | backlog | Phase 2; see notes |
 | HMD-029 | PowerShell GUI for supplying input files | backlog | Phase 1; see notes |
-| HMD-028 | Inbox folder watcher + serial queue + Scheduled Task | backlog | Phase 1; narrows HMD-007 scheduling; Plan: `plans/2026-07-31_hmd-phase1-inbox-watcher_07452bed.plan.md` |
 | HMD-025 | FP-aware VT verdict policy (threshold + engine ignore) | done | ChromeDriver VirIT `Win95.Marburg`; see notes |
 | HMD-023 | Deploy-map globs / wildcards (`*.pgi`) | done | `*` / `?` via `-like`; expands to all Clean matches; Miss if zero |
 | HMD-022 | Deploy-map explicit rename (`tool.exe → app.exe`) | backlog | Dest leaf differs from source leaf |
@@ -247,8 +247,7 @@ Keep `Source` a short stable token (not free text). Multi-provider merges need a
 
 **HMD-028 — Inbox watcher + serial queue + Scheduled Task**
 
-1. Watch a configured **input folder** for new URL-list / deploy-map drops
-   (TXT/CSV).
+1. Watch a configured **input folder** for new URL-list drops (TXT/CSV).
 2. **Queue** arrivals; process **one job at a time** (no overlapping
    `Invoke-HmdBulkDownload` runs).
 3. Phase 1 host trigger: **Windows Scheduled Task** (poll or short-lived
@@ -256,6 +255,12 @@ Keep `Source` a short stable token (not free text). Multi-provider merges need a
 4. Move or rename completed inputs (exact inbox lifecycle → **HMD-035**).
 5. Supersedes the vague “Scheduling” slice of **HMD-007** (SIEM / enterprise
    reporting remain on HMD-007).
+
+**Optional deploy sidecar:** beside `{stem}.txt` / `{stem}.csv` in `incoming/`,
+drop `{stem}.deploy.txt` or `{stem}.deploy.csv`. The worker claims both, passes
+`-DeployMapPath` into `Invoke-HmdBulkDownload`, and moves both to `done/` or
+`failed/`. Prefer `.deploy.txt` when both exist. Orphan sidecars are ignored.
+Sample: `examples/inbox/urls.txt` + `urls.deploy.txt`.
 
 **HMD-029 — PowerShell GUI for input**
 

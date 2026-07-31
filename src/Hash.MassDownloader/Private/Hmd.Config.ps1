@@ -38,29 +38,6 @@ function Get-HmdConfig {
     return [pscustomobject]$map
 }
 
-function Resolve-HmdApiKey {
-    [CmdletBinding()]
-    param(
-        [SecureString]$ApiKey
-    )
-
-    if ($null -ne $ApiKey) {
-        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($ApiKey)
-        try {
-            return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-        }
-        finally {
-            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-        }
-    }
-
-    $envKey = $env:VIRUSTOTAL_API_KEY
-    if ([string]::IsNullOrWhiteSpace($envKey)) {
-        throw 'VirusTotal API key required: set VIRUSTOTAL_API_KEY or pass -ApiKey.'
-    }
-    return $envKey.Trim()
-}
-
 function ConvertTo-HmdFlatArray {
     <#
     .SYNOPSIS

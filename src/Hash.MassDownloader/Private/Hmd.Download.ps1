@@ -14,7 +14,7 @@ function Start-HmdDownloadPool {
         [int]$ThrottleLimit = 5,
         [int]$MaxFileBytes = 104857600,
         [int]$MaxRetries = 3,
-        [string]$UserAgent = 'Hash.MassDownloader/0.4.0',
+        [string]$UserAgent = 'Hash.MassDownloader/0.5.0',
         [bool]$PrefixFileNames = $true,
         [scriptblock]$DownloadInvoker
     )

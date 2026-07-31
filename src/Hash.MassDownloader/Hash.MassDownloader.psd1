@@ -1,6 +1,6 @@
 @{
     RootModule        = 'Hash.MassDownloader.psm1'
-    ModuleVersion     = '0.4.0'
+    ModuleVersion     = '0.5.0'
     GUID              = 'c8e4a1b2-7f3d-4a9e-b5c1-0d8e2f6a4b19'
     Author            = 'Ville Pispa'
     CompanyName       = 'Independent'
@@ -10,6 +10,10 @@
     FunctionsToExport = @(
         'Get-HmdConfig'
         'Resolve-HmdApiKey'
+        'Get-HmdDefaultApiKeyCredentialTarget'
+        'Get-HmdApiKeyFromCredentialManager'
+        'Set-HmdApiKeyCredential'
+        'Remove-HmdApiKeyCredential'
         'ConvertTo-HmdFlatArray'
         'Import-HmdUrlList'
         'Initialize-HmdWorkRoot'
@@ -49,6 +53,15 @@
         'Get-HmdMergedVerdict'
         'Expand-HmdArchiveSafe'
         'Invoke-HmdArchiveInspect'
+        'Get-HmdInboxPaths'
+        'Initialize-HmdInbox'
+        'Test-HmdInboxInputFileName'
+        'Get-HmdInboxDeployMapPath'
+        'Get-HmdInboxNextJob'
+        'Move-HmdInboxJob'
+        'Enter-HmdInboxMutex'
+        'Exit-HmdInboxMutex'
+        'Invoke-HmdInboxWorker'
         'Invoke-HmdBulkDownload'
     )
     PrivateData       = @{
@@ -56,7 +69,7 @@
             Tags         = @('Hash', 'Reputation', 'VirusTotal', 'Malware', 'Download', 'Security', 'PowerShell')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/villepispa/hash-mass-downloader'
-            ReleaseNotes = 'v0.4.0 — ZIP-family archive inspection (HMD-006); selective archive-member VT (HMD-045).'
+            ReleaseNotes = 'v0.5.0 — Phase 1 inbox worker + CredMan API key + mutex/lifecycle (HMD-028/034/035).'
         }
     }
 }

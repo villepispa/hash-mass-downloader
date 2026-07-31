@@ -4,8 +4,9 @@ PowerShell 7.2+ bulk URL downloader with SHA256-first hash reputation
 (**VirusTotal** is the first provider), local hash cache, **Microsoft Defender
 hard-gate scan**, quarantine disposition, CSV audit logs, HTML reporting, resume
 checkpoints, optional leaf-name prefix, post-Clean deploy maps (TXT/CSV with
-`-like` wildcards and optional `http(s)` File entries), and **opt-in ZIP-family
-archive inspection** with selective member VT (`ArchiveVtMode`).
+`-like` wildcards and optional `http(s)` File entries), **opt-in ZIP-family
+archive inspection** with selective member VT (`ArchiveVtMode`), and a **Phase 1
+inbox worker** (Scheduled Task / CredMan API key / single-instance mutex).
 
 **License:** [MIT](LICENSE) · **Spec:** [docs/product-brief.md](docs/product-brief.md) · **Release:** [docs/release.md](docs/release.md)
 
@@ -78,6 +79,43 @@ enabled, member VT defaults to **None** (`ArchiveVtMode` / hash-only). Set
 `ArchiveVtMode` to `Interesting` to VT high-risk members only, or `All` for
 every member.
 
+## Inbox worker (Phase 1)
+
+Drop URL lists into `incoming/`. Optionally place a **deploy sidecar** beside
+each list so the worker passes `-DeployMapPath` automatically:
+
+| Input (claimed) | Optional sidecar |
+|-----------------|------------------|
+| `urls.txt` / `urls.csv` | `urls.deploy.txt` or `urls.deploy.csv` |
+| `batch01.txt` | `batch01.deploy.txt` / `batch01.deploy.csv` |
+
+Same stem, same folder. If both `.deploy.txt` and `.deploy.csv` exist,
+`.deploy.txt` wins. Orphan sidecars (no matching input) stay unclaimed.
+Sample pair: [`examples/inbox/`](examples/inbox/).
+
+A Scheduled Task (or manual run) processes **one job at a time**:
+
+```powershell
+# Store VT key for the task user (once)
+pwsh -NoProfile -File .\scripts\Register-HmdApiKeyCredential.ps1
+
+# Register 5-minute poll (current user)
+pwsh -NoProfile -File .\scripts\Register-HmdInboxScheduledTask.ps1 `
+  -InboxRoot 'D:\Hmd\inbox' -WorkRootBase 'D:\Hmd\jobs' -Force
+
+# Copy examples into the inbox, then run once
+Copy-Item .\examples\inbox\urls.txt, .\examples\inbox\urls.deploy.txt `
+  'D:\Hmd\inbox\incoming\'
+pwsh -NoProfile -File .\scripts\Invoke-HmdInboxWorker.ps1 `
+  -InboxRoot 'D:\Hmd\inbox' -WorkRootBase 'D:\Hmd\jobs' `
+  -SkipVirusTotal -AgentSummary
+```
+
+Layout under the inbox root: `incoming/` → `processing/` → `done/` or
+`failed/` (failures get `*.err.txt`; input + sidecar move together).
+Overlapping workers fail closed on the named mutex
+(`Local\Hash.MassDownloader.Inbox` by default).
+
 ## Layout
 
 | Path | Role |
@@ -91,6 +129,7 @@ every member.
 | `scripts/Invoke-HmdBumpVersion.ps1` | Align ModuleVersion / UserAgent / Status |
 | `scripts/Invoke-HmdValidate.ps1` | Version sync + Pester + PSA gate |
 | `examples/urls.sample.txt` | Sample TXT input |
+| `examples/inbox/` | Sample inbox drop: `urls.txt` + `urls.deploy.txt` sidecar |
 | `examples/deploy.sample.txt` | Sample Clean-deploy map (sectioned TXT) |
 | `examples/deploy.sample.csv` | Sample Clean-deploy map (CSV) |
 

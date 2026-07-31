@@ -7,6 +7,27 @@ versioning aligns with [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-31
+
+### Added
+
+- **HMD-028**: Serial inbox worker (`Invoke-HmdInboxWorker` /
+  `scripts/Invoke-HmdInboxWorker.ps1`); optional deploy sidecar
+  `stem.deploy.txt|csv`; `Register-HmdInboxScheduledTask.ps1` poll task.
+- **HMD-034**: VT API key via Windows Credential Manager (default target
+  `Hash.MassDownloader/VirusTotal`); `Register-HmdApiKeyCredential.ps1`;
+  resolve order `-ApiKey` → CredMan → `VIRUSTOTAL_API_KEY`.
+- **HMD-035**: Named mutex (fail-closed) + inbox folders
+  `incoming` / `processing` / `done` / `failed` (+ `.err.txt` on failure).
+
+### Changed
+
+- ModuleVersion / UserAgent / Status → **0.5.0**.
+- Product brief Scope → v0.5.0 (Phase 1 inbox slice in-scope; GUI still roadmap).
+- Inbox deploy sidecar: operator docs + `examples/inbox/` sample pair
+  (`urls.txt` + `urls.deploy.txt`); Pester covers csv preference, orphans,
+  and worker `-DeployMapPath` pass-through.
+
 ## [0.4.0] - 2026-07-31
 
 ### Added

@@ -5,6 +5,7 @@ Human-readable disclosure trail for substantive AI-assisted work.
 | When | Phase / scope | Deliverable | Tool / model | Purpose | Verified by |
 |------|---------------|-------------|--------------|---------|-------------|
 <!-- AAI+ -->
+| 2026-07-31 10:45:00 | OSS-021 / HMD-028+034+035 Phase 1 | Inbox worker; CredMan; mutex lifecycle; schtask; v0.5.0; Pester 59 | Cursor Agent [Tier 2: composer-2.5-fast] | Unattended serial inbox + secrets without plaintext key on disk | Operator: `Invoke-HmdValidate.ps1` → HMD-VALIDATE-OK passed=59 |
 | 2026-07-31 08:55:58 | HMD-045 selective archive VT | ArchiveVtMode; interest helpers; pipeline; Pester 49; docs | Cursor Agent [Tier 2: composer-2.5-fast] | VT only high-risk archive members (quota); complements HMD-006 | Operator: `Invoke-HmdValidate.ps1` → HMD-VALIDATE-OK passed=49 |
 | 2026-07-31 07:23:31 | HMD-006 archive inspection | Hmd.Archive; pipeline wire; config; Pester 46; docs | Cursor Agent [Tier 2: composer-2.5-fast] | ZIP-family member hash (opt-in); hash-only default; zip-slip safe | Operator: `Invoke-HmdValidate.ps1` → HMD-VALIDATE-OK passed=46 |
 | 2026-07-30 23:15:38 | HMD-026/027 Defender + deploy URLs | LocalAv scan; map harvest; optional InputPath; v0.3.0; Pester 39 | Cursor Agent [Tier 2: composer-2.5-fast] | Explicit Defender hard-gate; fewer manual URL+map duplicates | Operator: `Invoke-HmdValidate.ps1` → HMD-VALIDATE-OK passed=39 |
