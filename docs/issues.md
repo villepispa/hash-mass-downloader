@@ -9,6 +9,8 @@ items here from **Backlog** (see [release.md](release.md)).
 
 | ID | Title | Status | Notes |
 |----|-------|--------|-------|
+| HMD-047 | Split archive-member scan log + DisplayArchiveScanLog | done | v0.6.0; `archive-scanlog.csv`; host dump default false; see notes |
+| HMD-046 | Live terminal + progress.log for run actions | done | v0.6.0; Write-Progress + host lines; `logs/progress.log`; see notes |
 | HMD-028 | Inbox worker + Scheduled Task | done | v0.5.0; `Invoke-HmdInboxWorker`; Plan `07452bed` |
 | HMD-034 | Unattended secrets / CredMan API key | done | v0.5.0; target `Hash.MassDownloader/VirusTotal` |
 | HMD-035 | Single-instance mutex + inbox lifecycle | done | v0.5.0; Plan `07452bed` |
@@ -62,6 +64,52 @@ items here from **Backlog** (see [release.md](release.md)).
 
 ## Notes
 
+### HMD-047 notes — archive-member scan log (separate from DisplayScanLog)
+
+**Intent:** `ArchiveVtMode` Interesting/All (and hash-only inspection) emit one
+row per archive member. Dumping those on the host with `DisplayScanLog` floods
+the terminal. Members need a dedicated CSV and their own display switch.
+
+**Acceptance:**
+
+1. Member rows (`#archive/<entry>`) write `logs/archive-scanlog.csv`, not
+   `logs/scanlog.csv`.
+2. Config `DisplayArchiveScanLog` (default **false**) dumps the archive CSV
+   table after the run. `DisplayScanLog` stays top-level only.
+3. `-AgentSummary` quiets the archive table unless `DisplayArchiveScanLog` is
+   set in `ConfigOverride`. Summary still prints `ArchiveScanLog` when the
+   file exists.
+4. Console `Records[]` still includes members (tests / HTML inventory). Resume
+   loads both CSVs; a legacy mixed `scanlog.csv` is split on rewrite.
+5. Pester: split files, empty export deletes the CSV, checkpoint migrate.
+
+### HMD-046 notes — live progress (terminal and/or log)
+
+**Intent:** Operators watching a long bulk run (or a Scheduled Task log) can
+see which phase is in progress — download, hash/AV/VT, deploy — instead of
+only the post-run summary.
+
+**Acceptance:**
+
+1. Config `DisplayProgress` (default **true**): `Write-Progress` bar plus
+   host lines for START / ITEM / DONE. STEP events update the bar and log
+   only (Hash, Defender, VirusTotal, Archive) so the host is not flooded.
+2. Config `ProgressLog` (default **true**): append-only UTF-8
+   `logs/progress.log` under `-WorkRoot` (ISO timestamp, `PHASE=`, `STATUS=`).
+3. `-AgentSummary` turns off host/bar progress unless `DisplayProgress` is
+   set in `ConfigOverride`; the file log still writes unless `ProgressLog`
+   is false.
+4. Parallel download pool: START while the pool runs; per-URL ITEM lines
+   after the pool returns (ForEach-Object -Parallel cannot stream host
+   progress). Serialized process/deploy emit live ITEM/STEP lines.
+5. Console summary includes `ProgressLog` when the file exists. Never log
+   API keys or other secrets.
+6. Pester: formatter, context, log append, and a mocked bulk run covering
+   Download + Process + Complete phases.
+
+**Out of scope v1:** per-byte HTTP progress inside `Invoke-WebRequest`;
+GUI/web job progress (HMD-029/030).
+
 ### HMD-006 notes — archive inspection (HPI/JPI/JAR)
 
 **Intent:** When a downloaded file is a ZIP-family archive (Jenkins `.hpi` /
@@ -76,7 +124,8 @@ payloads — not only the container hash.
    `ArchiveMaxMembers`, `ArchiveExtensions`. Depth **1** only (no nested recurse).
 3. After container SHA-256 + local AV (+ optional container VT), extract under
    `Inspected/<parentLeaf>/` with **zip-slip** rejection.
-4. Per member: SHA-256; child scanlog row (`FileName` = `#archive/<entry>`);
+4. Per member: SHA-256; child row (`FileName` = `#archive/<entry>`) in
+   `logs/archive-scanlog.csv` (HMD-047; not mixed into host `scanlog.csv`);
    when `ArchiveContentsHashOnly` is **false**, VT hash lookup like top-level.
 5. With hash-only (default): parent verdict unchanged by members (except extract
    failure → parent `Error`). With VT on members: parent = worst of container +
@@ -105,10 +154,10 @@ false).
    (`.exe`, `.dll`, `.ps1`, `.bat`, `.cmd`, `.vbs`, `.js`, `.msi`, `.scr`,
    `.com`, `.sys`, nested `.jar` / `.hpi` / `.jpi` leaf, etc.); optional MZ/PE
    magic; optional path keywords (`bin/`, `lib/`, `plugins/`).
-3. Non-interesting members: SHA-256 + scanlog only (same as hash-only today).
+3. Non-interesting members: SHA-256 + archive-scanlog only (same as hash-only today).
 4. Interesting members: VT hash lookup like top-level; parent worst-of when
    any member VT runs.
-5. Scanlog/report flag why a member was selected (`ArchiveInterestReason`).
+5. Scanlog/archive-scanlog flag why a member was selected (`ArchiveInterestReason`).
 6. Pester: interesting → VT called; boring → not; mode None/All unchanged.
 7. Out of scope v1: ML/YARA, nested recurse, uploading unknown hashes (hash
    lookup only).
@@ -333,4 +382,3 @@ though numbered after HMD-033.
 | **HMD-044** | **Intune / PS 5.1 dual-host** — ship constrained entry/remediation stubs for Windows PowerShell 5.1 + Intune (size/host floors like WinGet.Audit); core module remains PS 7.2+ |
 
 **Still not filed:** mobile UI (discuss if needed).
-

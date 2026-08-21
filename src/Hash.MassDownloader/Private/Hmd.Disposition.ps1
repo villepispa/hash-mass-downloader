@@ -69,7 +69,13 @@ function New-HmdHtmlReport {
         [string]$Path
     )
 
-    $groups = $Records | Group-Object Verdict
+    $kpiRecords = @($Records | Where-Object {
+            -not (Test-HmdIsArchiveScanRow -FileName ([string]$_.FileName))
+        })
+    if ($kpiRecords.Count -eq 0) {
+        $kpiRecords = @($Records)
+    }
+    $groups = $kpiRecords | Group-Object Verdict
     $counts = @{}
     foreach ($g in $groups) { $counts[$g.Name] = $g.Count }
 

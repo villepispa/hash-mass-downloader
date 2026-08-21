@@ -210,6 +210,123 @@ function Test-HmdIsArchiveScanRow {
     return $FileName.StartsWith('#archive/', [StringComparison]::OrdinalIgnoreCase)
 }
 
+function ConvertTo-HmdScanLogRow {
+    <#
+    .SYNOPSIS
+        Normalize a scan/archive-scan row to the fixed CSV column set.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [object]$InputObject
+    )
+
+    $o = $InputObject
+    return [pscustomobject]@{
+        Url                   = [string]$o.Url
+        FileName              = [string]$o.FileName
+        LocalPath             = [string]$o.LocalPath
+        Sha256                = [string]$o.Sha256
+        Verdict               = [string]$o.Verdict
+        Malicious             = [int]$(if ($null -ne $o.PSObject.Properties['Malicious']) { $o.Malicious } else { 0 })
+        Suspicious            = [int]$(if ($null -ne $o.PSObject.Properties['Suspicious']) { $o.Suspicious } else { 0 })
+        Undetected            = [int]$(if ($null -ne $o.PSObject.Properties['Undetected']) { $o.Undetected } else { 0 })
+        Harmless              = [int]$(if ($null -ne $o.PSObject.Properties['Harmless'] -and
+                -not [string]::IsNullOrWhiteSpace([string]$o.Harmless)) { $o.Harmless } else { 0 })
+        IgnoredEngines        = $(if ($null -ne $o.PSObject.Properties['IgnoredEngines']) {
+                [string]$o.IgnoredEngines
+            }
+            else { '' })
+        ArchiveInterestReason = $(if ($null -ne $o.PSObject.Properties['ArchiveInterestReason']) {
+                [string]$o.ArchiveInterestReason
+            }
+            else { '' })
+        SignatureStatus       = $(if ($null -ne $o.PSObject.Properties['SignatureStatus']) {
+                [string]$o.SignatureStatus
+            }
+            else { '' })
+        Signer                = $(if ($null -ne $o.PSObject.Properties['Signer']) {
+                [string]$o.Signer
+            }
+            else { '' })
+        DefenderStatus        = $(if ($null -ne $o.PSObject.Properties['DefenderStatus']) {
+                [string]$o.DefenderStatus
+            }
+            else { '' })
+        DefenderThreat        = $(if ($null -ne $o.PSObject.Properties['DefenderThreat']) {
+                [string]$o.DefenderThreat
+            }
+            else { '' })
+        ContentType           = $(if ($null -ne $o.PSObject.Properties['ContentType']) {
+                [string]$o.ContentType
+            }
+            else { '' })
+        Bytes                 = $(if ($null -ne $o.PSObject.Properties['Bytes'] -and
+                -not [string]::IsNullOrWhiteSpace([string]$o.Bytes)) { [long]$o.Bytes } else { [long]0 })
+        CacheHit              = $(if ($null -ne $o.PSObject.Properties['CacheHit']) { $o.CacheHit } else { $false })
+        Error                 = $(if ($null -ne $o.PSObject.Properties['Error']) { [string]$o.Error } else { '' })
+        ProcessedAt           = $(if ($null -ne $o.PSObject.Properties['ProcessedAt']) {
+                [string]$o.ProcessedAt
+            }
+            else { '' })
+    }
+}
+
+function Import-HmdScanLogCsv {
+    <#
+    .SYNOPSIS
+        Load a scanlog or archive-scanlog CSV as normalized row objects.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [object[]]@()
+    }
+
+    $out = [System.Collections.Generic.List[object]]::new()
+    foreach ($row in @(Import-Csv -LiteralPath $Path)) {
+        if ($null -eq $row) { continue }
+        $out.Add((ConvertTo-HmdScanLogRow -InputObject $row)) | Out-Null
+    }
+    return [object[]]$out.ToArray()
+}
+
+function Export-HmdScanLogCsv {
+    <#
+    .SYNOPSIS
+        Write normalized scanlog rows, or delete the file when empty (HMD-047).
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [object[]]$Records,
+
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $list = @($Records | Where-Object { $null -ne $_ })
+    if ($list.Count -eq 0) {
+        if (Test-Path -LiteralPath $Path) {
+            Remove-Item -LiteralPath $Path -Force
+        }
+        return
+    }
+
+    $dir = Split-Path -Parent $Path
+    if (-not [string]::IsNullOrWhiteSpace($dir) -and -not (Test-Path -LiteralPath $dir)) {
+        $null = New-Item -ItemType Directory -Force -Path $dir
+    }
+
+    $list |
+        ForEach-Object { ConvertTo-HmdScanLogRow -InputObject $_ } |
+        Export-Csv -LiteralPath $Path -NoTypeInformation -Encoding utf8
+}
+
 function Get-HmdMergedVerdict {
     <#
     .SYNOPSIS

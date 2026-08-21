@@ -5,7 +5,7 @@ Comprehensive technical specification and design document for **Hash.MassDownloa
 
 **Host floor:** PowerShell 7.2+  
 **License:** MIT  
-**Status:** v0.5.0 — core pipeline, Clean deploy, Defender hard gate, archive inspection, Phase 1 inbox worker + CredMan + mutex; remaining roadmap items below are documented only.
+**Status:** v0.6.0 — core pipeline, Clean deploy, Defender hard gate, archive inspection, Phase 1 inbox, live progress, split archive-scanlog; remaining roadmap items below are documented only.
 
 ---
 
@@ -25,7 +25,7 @@ resume capabilities.
 
 ## Scope
 
-### In scope (v0.5.0)
+### In scope (v0.6.0)
 
 | Capability | Notes |
 |------------|-------|
@@ -46,6 +46,8 @@ resume capabilities.
 | Inbox serial worker + Scheduled Task | HMD-028; `incoming`→`processing`→`done`/`failed` |
 | CredMan / env / `-ApiKey` for VT key | HMD-034; default target `Hash.MassDownloader/VirusTotal` |
 | Single-instance inbox mutex | HMD-035; fail-closed when busy |
+| Live progress (host + `progress.log`) | HMD-046; `DisplayProgress` / `ProgressLog` |
+| Split archive-member scan log | HMD-047; `archive-scanlog.csv` + `DisplayArchiveScanLog` |
 | Public GitHub repo + SemVer releases | Tags / GitHub Releases |
 
 ### Out of scope (roadmap)
@@ -131,7 +133,13 @@ Input (TXT/CSV) + deploy-map http(s) harvest
     None/All when mode unset); `Interesting` VTs high-risk members only (HMD-045)
     and rolls up worst-of when any member VT runs
 16. **Selective member VT** — extension / path-keyword / optional MZ heuristics;
-    `ArchiveInterestReason` on `#archive/` scanlog rows (HMD-045)
+    `ArchiveInterestReason` on `#archive/` rows in `archive-scanlog.csv` (HMD-045/047)
+17. **Live progress** — `Write-Progress` plus host lines during download / process /
+    deploy, and append-only `logs/progress.log` (HMD-046); `-AgentSummary` quiets
+    host/bar unless `DisplayProgress` is overridden
+18. **Archive-member log** — member rows write `logs/archive-scanlog.csv`; host
+    dump is `DisplayArchiveScanLog` (default false) so `DisplayScanLog` stays
+    top-level (HMD-047)
 
 ## Non-functional requirements
 
@@ -139,7 +147,7 @@ Input (TXT/CSV) + deploy-map http(s) harvest
 |-----|-------------|
 | Reliability | Isolate per-URL failures; continue batch |
 | Maintainability | Module + Safety-tier entry scripts; Pester + PSA |
-| Auditability | CSV scan log, hash cache, download index |
+| Auditability | CSV scan log, archive-scanlog, hash cache, download index |
 | API efficiency | Cache + serialized VT + configurable delay |
 | Scalability | Configurable download thread count |
 | Recoverability | Checkpoint + resume |
@@ -255,6 +263,7 @@ false positives quarantine legitimate packages.
 
 Operators may also raise `MaliciousThreshold` (for example `2` or `3`) in
 `config/hmd.defaults.json` or a config override. Both knobs can be combined.
+
 ## Download pipeline
 
 - Download 5–10 files concurrently (default from config)
@@ -293,19 +302,24 @@ and re-run, or process a different URL that yields the same SHA-256.
 
 | Artefact | Role |
 |----------|------|
-| `logs/scanlog.csv` | Per-file processing record (primary audit trail) |
+| `logs/scanlog.csv` | Per-file processing record (top-level downloads; primary audit trail) |
+| `logs/archive-scanlog.csv` | Archive-member rows (`#archive/<entry>`) when inspection ran (HMD-047) |
 | `logs/hashcache.csv` | Persistent hash → verdict cache |
 | `logs/download_index.csv` | Download attempt outcomes |
+| `logs/progress.log` | Live phase/step lines (HMD-046; ISO timestamp, PHASE/STATUS) |
 | `checkpoint.json` | Resume set (completed URLs) |
 | Console JSON | Summary object from `Invoke-HmdBulkDownload` / entry script |
 | `reports/report.html` | Human-readable KPIs + inventory |
 
 ### Field reference — `logs/scanlog.csv` (and console `Records[]`)
 
+Top-level download rows. Archive members use the same columns in
+`logs/archive-scanlog.csv` (HMD-047). Console `Records[]` still includes both.
+
 | Field | Type | Meaning |
 |-------|------|---------|
 | `Url` | string | Source URL processed |
-| `FileName` | string | Staged name: `NNNN_` + leaf when `PrefixFileNames` is true (default); else sanitized URL leaf (collision → `name_Index.ext`). Archive members (HMD-006): `#archive/<entry>` — excluded from Clean deploy and summary KPIs |
+| `FileName` | string | Staged name: `NNNN_` + leaf when `PrefixFileNames` is true (default); else sanitized URL leaf (collision → `name_Index.ext`). Archive members (HMD-006): `#archive/<entry>` in `archive-scanlog.csv` — excluded from Clean deploy, summary KPIs, and `DisplayScanLog` |
 | `LocalPath` | string | Final path after disposition (Clean / … / Error), or empty on early failure |
 | `Sha256` | string | Lowercase hex SHA-256 of the downloaded bytes; empty if download failed |
 | `Verdict` | string | `Clean` \| `Suspicious` \| `Malicious` \| `Unknown` \| `Error` |
@@ -356,6 +370,23 @@ Entries older than `CacheTtlDays` are ignored and refreshed on next miss.
 | `Error` | string | Error text on failure |
 | `DownloadedAt` | string | ISO 8601 timestamp |
 
+### Field reference — `logs/progress.log` (HMD-046)
+
+Append-only UTF-8 text (oldest first). One line per event. Never contains
+API keys. Parallel downloads emit per-URL ITEM lines **after** the pool
+returns; process/deploy lines are live.
+
+| Token | Meaning |
+|-------|---------|
+| ISO timestamp | Local `DateTime.ToString('o')` prefix |
+| `PHASE=` | `Download` \| `Process` \| `Deploy` \| `Complete` |
+| `STATUS=` | `START` \| `ITEM` \| `STEP` \| `DONE` |
+| `N/M` | Current / total when a count is known |
+| remainder | Human message (file leaf, verdict, ok/fail counts) |
+
+`STEP` (Hash / Defender / VirusTotal / Archive) is log + progress bar only.
+START / ITEM / DONE also `Write-Host` when `DisplayProgress` is true.
+
 ### Field reference — `logs/deploy_copy.csv` (HMD-019)
 
 Written when `-DeployMapPath` is set. One row per **copy attempt** (a glob may
@@ -387,16 +418,18 @@ produce many rows; a miss produces one row for the pattern).
 | `QueuedCount` | int | URLs not already in the checkpoint at **start** of this run (download/process queue). Not “still unfinished after the run” — on a successful first pass it equals `InputCount` / `ProcessedCount` |
 | `SkippedByCheckpoint` | int | `InputCount - QueuedCount` — URLs skipped by resume |
 | `ProcessedCount` | int | Download results handled in this run (`0` if everything was checkpoint-skipped) |
-| `CleanCount` / `SuspiciousCount` / `MaliciousCount` / `UnknownCount` / `ErrorCount` | int | **Verdict** tallies over `Records` (`Verdict` column — not VT engine fields) |
-| `UndetectedSum` / `HarmlessSum` | int | Sum of per-record VT engine counts `Undetected` / `Harmless` over `Records` |
+| `CleanCount` / `SuspiciousCount` / `MaliciousCount` / `UnknownCount` / `ErrorCount` | int | **Verdict** tallies over **top-level** `Records` (archive members excluded) |
+| `UndetectedSum` / `HarmlessSum` | int | Sum of per-record VT engine counts `Undetected` / `Harmless` over top-level `Records` |
 | `DeployedCount` / `DeployMissCount` / `DeployErrorCount` / `DeploySkipCount` | int | Clean-deploy outcomes when `-DeployMapPath` is set (else `0`) |
 | `DeployLog` | string \| null | Path to `logs/deploy_copy.csv` when deploy ran |
 | `PrefixFileNames` | bool | Whether this run used the `NNNN_` staged-name prefix |
-| `RecordsArePriorScanlog` | bool | `True` when this run processed nothing but returned existing `scanlog.csv` rows |
-| `ScanLog` | string | Path to `scanlog.csv` |
+| `RecordsArePriorScanlog` | bool | `True` when this run processed nothing but returned existing scanlog / archive-scanlog rows |
+| `ScanLog` | string | Path to `scanlog.csv` (top-level) |
+| `ArchiveScanLog` | string | Path to `archive-scanlog.csv` (members; file present only when members exist) |
 | `HashCache` | string | Path to `hashcache.csv` |
+| `ProgressLog` | string \| null | Path to `logs/progress.log` when `ProgressLog` ran |
 | `Report` | string \| null | Path to `report.html` when generated |
-| `Records` | object[] | Same shape as `scanlog.csv` rows (see above) |
+| `Records` | object[] | Combined top-level + archive-member rows (same columns) |
 
 ## Reporting
 
@@ -404,11 +437,12 @@ produce many rows; a miss produces one row for the pattern).
 
 | Section | Content |
 |---------|---------|
-| KPIs | Counts per verdict (`Clean`, `Suspicious`, `Malicious`, `Unknown`, `Error`) |
-| Inventory table | `URL`, `SHA256`, `Verdict`, `Malicious`, `Suspicious`, `Signature`, `Defender` |
+| KPIs | Counts per verdict on **top-level** files (archive members excluded) (HMD-047) |
+| Inventory table | `URL`, `SHA256`, `Verdict`, `Malicious`, `Suspicious`, `Signature`, `Defender` (includes `#archive/` members) |
 
 HTML inventory currently emphasizes malicious/suspicious counts, signature, and
-Defender status; full Undetected values remain in `scanlog.csv` / console `Records`.
+Defender status; full Undetected values remain in `scanlog.csv` /
+`archive-scanlog.csv` / console `Records`.
 
 ## Security considerations
 
@@ -432,7 +466,7 @@ Defender status; full Undetected values remain in `scanlog.csv` / console `Recor
 | `Quarantine` | Isolated copies per policy |
 | `Unknown` | No VT result / not found |
 | `Error` | Download or processing failures |
-| `logs` | CSV artefacts |
+| `logs` | CSV artefacts + `progress.log` |
 | `reports` | HTML report |
 
 ## Configuration parameters
@@ -450,7 +484,10 @@ See [`config/hmd.defaults.json`](../config/hmd.defaults.json):
 | `UploadUnknownSamples` | Default false; CLI may override |
 | `GenerateReport` | HTML report on completion |
 | `DisplaySummary` | Write host summary block after the run (default true) |
-| `DisplayScanLog` | Write `scanlog.csv` table to host after the run (default true) |
+| `DisplayScanLog` | Write top-level `scanlog.csv` table to host after the run (default true) |
+| `DisplayArchiveScanLog` | Write `archive-scanlog.csv` table to host (default **false**; HMD-047) |
+| `DisplayProgress` | Live `Write-Progress` bar + host START/ITEM/DONE lines (default true) (HMD-046) |
+| `ProgressLog` | Append `logs/progress.log` during the run (default true) (HMD-046) |
 | `PrefixFileNames` | Prefix staged names with `NNNN_` (default true); `-NoFileNamePrefix` forces false |
 | `DeployOverwrite` | When deploying Clean files, overwrite existing destination files (default true) |
 | `LocalAvScanEnabled` | Run Microsoft Defender custom scan after download (default true); `-SkipLocalAvScan` forces false |
@@ -473,7 +510,9 @@ See [`config/hmd.defaults.json`](../config/hmd.defaults.json):
 
 `-AgentSummary` on `scripts/Invoke-HmdBulkDownload.ps1` emits one success-stream
 line (`HMD-RUN-OK …` / `HMD-RUN-FAIL …`) and turns off `DisplaySummary` /
-`DisplayScanLog` unless those keys are set in `ConfigOverride`.
+`DisplayScanLog` / `DisplayArchiveScanLog` / `DisplayProgress` unless those keys
+are set in `ConfigOverride`. `ProgressLog` still writes `logs/progress.log`
+unless explicitly set false.
 
 `-DeployMapPath` accepts a sectioned TXT (`@destination` then file names) or CSV
 (`Destination,File`). `File` may be exact, a wildcard, or an `http(s)` URL.

@@ -354,7 +354,7 @@ Describe 'Invoke-HmdBulkDownload with mocks' {
         $r1 = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
             -ConfigOverride @{
-                ApiDelaySeconds = 0; GenerateReport = $true; DisplaySummary = $false
+                ApiDelaySeconds = 0; GenerateReport = $true; DisplaySummary = $false; DisplayProgress = $false
                 DisplayScanLog = $false; LocalAvScanEnabled = $false
             }
 
@@ -375,7 +375,7 @@ Describe 'Invoke-HmdBulkDownload with mocks' {
         $r2 = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
             -ConfigOverride @{
-                ApiDelaySeconds = 0; DisplaySummary = $false; DisplayScanLog = $false
+                ApiDelaySeconds = 0; DisplaySummary = $false; DisplayProgress = $false; DisplayScanLog = $false
                 LocalAvScanEnabled = $false
             }
         $r2.QueuedCount | Should -Be 0
@@ -421,7 +421,7 @@ tool.exe
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
             -NoFileNamePrefix -DeployMapPath $map `
             -ConfigOverride @{
-                ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false
+                ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayProgress = $false
                 DisplayScanLog = $false; LocalAvScanEnabled = $false
             }
 
@@ -464,7 +464,7 @@ tool.exe
         $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
             -ConfigOverride @{
-                ApiDelaySeconds = 0; QuarantineMalicious = $true; DisplaySummary = $false
+                ApiDelaySeconds = 0; QuarantineMalicious = $true; DisplaySummary = $false; DisplayProgress = $false
                 DisplayScanLog = $false; LocalAvScanEnabled = $false
             }
 
@@ -513,6 +513,7 @@ tool.exe
                 IgnoreEngines       = @('VirIT')
                 QuarantineMalicious = $true
                 DisplaySummary      = $false
+                DisplayProgress     = $false
                 DisplayScanLog      = $false
                 GenerateReport      = $false
                 LocalAvScanEnabled  = $false
@@ -557,7 +558,7 @@ https://mock.example/b.bin
         $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
             -ConfigOverride @{
-                ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false
+                ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayProgress = $false
                 DisplayScanLog = $false; LocalAvScanEnabled = $false
             }
 
@@ -607,7 +608,7 @@ extra-leaf.bin
         $r = Invoke-HmdBulkDownload -DeployMapPath $map -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
             -LocalAvInvoker $avClean -NoFileNamePrefix `
-            -ConfigOverride @{ ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayScanLog = $false }
+            -ConfigOverride @{ ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayProgress = $false; DisplayScanLog = $false }
 
         $r.InputCount | Should -Be 1
         $r.ProcessedCount | Should -Be 1
@@ -651,7 +652,7 @@ evil.bin
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
             -LocalAvInvoker $avThreat -NoFileNamePrefix `
             -ConfigOverride @{
-                ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false
+                ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayProgress = $false
                 DisplayScanLog = $false; QuarantineMalicious = $true
             }
 
@@ -690,7 +691,7 @@ evil.bin
         $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
             -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
             -LocalAvInvoker $avUnavail `
-            -ConfigOverride @{ ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayScanLog = $false }
+            -ConfigOverride @{ ApiDelaySeconds = 0; GenerateReport = $false; DisplaySummary = $false; DisplayProgress = $false; DisplayScanLog = $false }
 
         $r.Records[0].Verdict | Should -Be 'Error'
         $r.Records[0].DefenderStatus | Should -Be 'Unavailable'
@@ -775,6 +776,27 @@ Describe 'Archive inspection helpers (HMD-006)' {
     It 'Test-HmdIsArchiveScanRow detects #archive/ FileName' {
         Test-HmdIsArchiveScanRow -FileName '#archive/lib/x.dll' | Should -BeTrue
         Test-HmdIsArchiveScanRow -FileName '0000_tool.zip' | Should -BeFalse
+    }
+
+    It 'ConvertTo-HmdScanLogRow keeps ArchiveInterestReason' {
+        $row = ConvertTo-HmdScanLogRow -InputObject ([pscustomobject]@{
+                Url                   = 'https://a.example/x.zip'
+                FileName              = '#archive/bin/a.exe'
+                LocalPath             = 'C:\insp\a.exe'
+                Sha256                = 'abc'
+                Verdict               = 'Unknown'
+                ArchiveInterestReason = 'ext:.exe'
+            })
+        $row.ArchiveInterestReason | Should -Be 'ext:.exe'
+        $row.Malicious | Should -Be 0
+        $row.FileName | Should -Be '#archive/bin/a.exe'
+    }
+
+    It 'Export-HmdScanLogCsv deletes the file when there are no rows' {
+        $p = Join-Path $TestDrive 'empty-scan.csv'
+        'stale' | Set-Content -LiteralPath $p -Encoding utf8
+        Export-HmdScanLogCsv -Records @() -Path $p
+        (Test-Path -LiteralPath $p) | Should -BeFalse
     }
 
     It 'Get-HmdMergedVerdict picks worst' {
@@ -931,7 +953,7 @@ Describe 'Invoke-HmdBulkDownload archive inspection (HMD-006)' {
             -LocalAvInvoker $avClean `
             -ConfigOverride @{
                 ApiDelaySeconds = 0; GenerateReport = $false
-                DisplaySummary = $false; DisplayScanLog = $false
+                DisplaySummary = $false; DisplayProgress = $false; DisplayScanLog = $false
                 LocalAvScanEnabled = $true
             }
         @($r.Records | Where-Object { Test-HmdIsArchiveScanRow -FileName $_.FileName }).Count |
@@ -999,7 +1021,7 @@ Describe 'Invoke-HmdBulkDownload archive inspection (HMD-006)' {
             -LocalAvInvoker $avClean `
             -ConfigOverride @{
                 ApiDelaySeconds = 0; GenerateReport = $false
-                DisplaySummary = $false; DisplayScanLog = $false
+                DisplaySummary = $false; DisplayProgress = $false; DisplayScanLog = $false
                 ArchiveInspectionEnabled = $true
                 ArchiveContentsHashOnly = $true
             }
@@ -1011,6 +1033,13 @@ Describe 'Invoke-HmdBulkDownload archive inspection (HMD-006)' {
         # Only container hash lookup (one files/{sha} GET), not a second for the member.
         $script:hmdArchiveVtCalls | Should -Be 1
         $r.CleanCount | Should -Be 1
+        $scanCsv = @(Import-Csv -LiteralPath (Join-Path $work 'logs\scanlog.csv'))
+        @($scanCsv | Where-Object { Test-HmdIsArchiveScanRow -FileName $_.FileName }).Count |
+            Should -Be 0
+        $archCsv = @(Import-Csv -LiteralPath (Join-Path $work 'logs\archive-scanlog.csv'))
+        $archCsv.Count | Should -Be 1
+        $archCsv[0].FileName | Should -Be '#archive/nested/a.txt'
+        $r.ArchiveScanLog | Should -Match 'archive-scanlog\.csv$'
     }
 }
 
@@ -1081,7 +1110,7 @@ Describe 'Invoke-HmdBulkDownload selective archive VT (HMD-045)' {
             -LocalAvInvoker $avClean `
             -ConfigOverride @{
                 ApiDelaySeconds = 0; GenerateReport = $false
-                DisplaySummary = $false; DisplayScanLog = $false
+                DisplaySummary = $false; DisplayProgress = $false; DisplayScanLog = $false
                 ArchiveInspectionEnabled = $true
                 ArchiveVtMode = 'Interesting'
                 ArchiveContentsHashOnly = $true
@@ -1098,6 +1127,55 @@ Describe 'Invoke-HmdBulkDownload selective archive VT (HMD-045)' {
         $script:hmdInterestVtHashes.Count | Should -Be 2
         $script:hmdInterestVtHashes | Should -Contain $exeRow.Sha256
         $script:hmdInterestVtHashes | Should -Not -Contain $txtRow.Sha256
+        $scanCsv = @(Import-Csv -LiteralPath (Join-Path $work 'logs\scanlog.csv'))
+        @($scanCsv | Where-Object { Test-HmdIsArchiveScanRow -FileName $_.FileName }).Count |
+            Should -Be 0
+        $archCsv = @(Import-Csv -LiteralPath (Join-Path $work 'logs\archive-scanlog.csv'))
+        $archCsv.Count | Should -Be 2
+    }
+
+    It 'checkpoint resume splits a legacy mixed scanlog into archive-scanlog.csv' {
+        $work = Join-Path $TestDrive 'arch-migrate'
+        $null = Initialize-HmdWorkRoot -WorkRoot $work
+        $url = 'https://example.test/legacy.zip'
+        $mixed = @(
+            [pscustomobject]@{
+                Url = $url; FileName = '0000_legacy.zip'; LocalPath = ''
+                Sha256 = 'aa'; Verdict = 'Clean'; Malicious = 0; Suspicious = 0
+                Undetected = 10; Harmless = 0; CacheHit = $false; Error = ''
+                ProcessedAt = '2026-01-01T00:00:00'
+            }
+            [pscustomobject]@{
+                Url = $url; FileName = '#archive/a.txt'; LocalPath = ''
+                Sha256 = 'bb'; Verdict = 'Unknown'; Malicious = 0; Suspicious = 0
+                Undetected = 0; Harmless = 0; CacheHit = $false; Error = 'HashOnly=true'
+                ArchiveInterestReason = ''; ProcessedAt = '2026-01-01T00:00:00'
+            }
+        )
+        Export-HmdScanLogCsv -Records $mixed -Path (Join-Path $work 'logs\scanlog.csv')
+        $done = [System.Collections.Generic.HashSet[string]]::new(
+            [StringComparer]::OrdinalIgnoreCase
+        )
+        $null = $done.Add($url)
+        Save-HmdCheckpoint -CompletedUrls $done -Path (Join-Path $work 'checkpoint.json')
+        $input = Join-Path $TestDrive 'arch-migrate-urls.txt'
+        $url | Set-Content -LiteralPath $input -Encoding utf8
+        $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
+        $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
+            -ApiKey $sec -SkipVirusTotal -SkipLocalAvScan `
+            -ConfigOverride @{
+                GenerateReport = $false
+                DisplaySummary = $false; DisplayProgress = $false; DisplayScanLog = $false
+            }
+        $r.ProcessedCount | Should -Be 0
+        $scanCsv = @(Import-Csv -LiteralPath (Join-Path $work 'logs\scanlog.csv'))
+        $scanCsv.Count | Should -Be 1
+        $scanCsv[0].FileName | Should -Be '0000_legacy.zip'
+        $archCsv = @(Import-Csv -LiteralPath (Join-Path $work 'logs\archive-scanlog.csv'))
+        $archCsv.Count | Should -Be 1
+        $archCsv[0].FileName | Should -Be '#archive/a.txt'
+        @($r.Records | Where-Object { Test-HmdIsArchiveScanRow -FileName $_.FileName }).Count |
+            Should -Be 1
     }
 }
 
@@ -1286,6 +1364,123 @@ Describe 'Invoke-HmdInboxWorker (HMD-028)' {
         (Test-Path -LiteralPath (Join-Path $inbox 'done\urls.txt')) | Should -BeTrue
         (Test-Path -LiteralPath (Join-Path $inbox 'done\urls.deploy.txt')) | Should -BeTrue
         (Test-Path -LiteralPath (Join-Path $inbox 'incoming\urls.deploy.txt')) | Should -BeFalse
+    }
+}
+
+Describe 'HMD-046 progress' {
+    It 'Get-HmdProgressPercent clamps 0-100' {
+        Get-HmdProgressPercent -Current 0 -Total 0 | Should -Be 0
+        Get-HmdProgressPercent -Current 3 -Total 10 | Should -Be 30
+        Get-HmdProgressPercent -Current 10 -Total 10 | Should -Be 100
+        Get-HmdProgressPercent -Current 12 -Total 10 | Should -Be 100
+    }
+
+    It 'Format-HmdProgressLine includes phase, status, and fraction' {
+        $ts = [datetime]::Parse('2026-08-17T12:00:00')
+        $line = Format-HmdProgressLine -Phase Process -Status ITEM `
+            -Current 3 -Total 10 -Message "0002_tool.exe Verdict=Clean" `
+            -Timestamp $ts
+        $line | Should -Match 'PHASE=Process'
+        $line | Should -Match 'STATUS=ITEM'
+        $line | Should -Match '3/10'
+        $line | Should -Match '0002_tool.exe Verdict=Clean'
+        $line | Should -Not -Match "`n"
+    }
+
+    It 'Format-HmdProgressLine strips newlines from the message' {
+        $line = Format-HmdProgressLine -Phase Process -Status STEP `
+            -Message "a`r`nb"
+        $line | Should -Match ' a b$'
+        $line | Should -Not -Match "`n"
+    }
+
+    It 'defaults include DisplayProgress and ProgressLog' {
+        $c = Get-HmdConfig
+        [bool]$c.DisplayProgress | Should -BeTrue
+        [bool]$c.ProgressLog | Should -BeTrue
+        [bool]$c.DisplayScanLog | Should -BeTrue
+        [bool]$c.DisplayArchiveScanLog | Should -BeFalse
+    }
+
+    It 'New-HmdProgressContext AgentSummary quiets host but keeps log' {
+        $cfg = Get-HmdConfig -Override @{ DisplayProgress = $true; ProgressLog = $true }
+        $root = Join-Path $TestDrive 'progress-ctx'
+        $ctx = New-HmdProgressContext -Config $cfg -WorkRoot $root `
+            -AgentSummary -ConfigOverride @{}
+        $ctx.WriteHost | Should -BeFalse
+        $ctx.WriteBar | Should -BeFalse
+        $ctx.LogPath | Should -Match 'progress\.log$'
+    }
+
+    It 'Write-HmdProgress appends to log when host is off' {
+        $dir = Join-Path $TestDrive 'prog-log\logs'
+        $null = New-Item -ItemType Directory -Path $dir -Force
+        $path = Join-Path $dir 'progress.log'
+        $ctx = [pscustomobject]@{
+            WriteHost = $false
+            WriteBar  = $false
+            LogPath   = $path
+        }
+        Write-HmdProgress -Context $ctx -Phase Download -Status START `
+            -Current 0 -Total 2 -Message 'threads=5'
+        Write-HmdProgress -Context $ctx -Phase Download -Status DONE `
+            -Current 2 -Total 2 -Message 'ok=2 fail=0'
+        Test-Path -LiteralPath $path | Should -BeTrue
+        $text = Get-Content -LiteralPath $path -Raw -Encoding utf8
+        $text | Should -Match 'PHASE=Download STATUS=START 0/2 threads=5'
+        $text | Should -Match 'PHASE=Download STATUS=DONE 2/2 ok=2 fail=0'
+    }
+
+    It 'bulk run writes progress.log with Download and Process phases' {
+        $work = Join-Path $TestDrive 'run-progress'
+        $input = Join-Path $TestDrive 'progress-in.txt'
+        "https://mock.example/clean.bin" | Set-Content -LiteralPath $input -Encoding utf8
+
+        $downloadInvoker = {
+            param($req)
+            $bytes = [Text.Encoding]::UTF8.GetBytes('progress-payload')
+            [IO.File]::WriteAllBytes($req.OutFile, $bytes)
+            [pscustomobject]@{
+                StatusCode  = 200
+                ContentType = 'application/octet-stream'
+                Bytes       = $bytes.Length
+            }
+        }
+        $vtInvoker = {
+            param($req)
+            return [pscustomobject]@{
+                data = [pscustomobject]@{
+                    attributes = [pscustomobject]@{
+                        last_analysis_stats = [pscustomobject]@{
+                            malicious = 0; suspicious = 0; undetected = 40; harmless = 10
+                        }
+                    }
+                }
+            }
+        }
+
+        $sec = ConvertTo-SecureString 'test-key' -AsPlainText -Force
+        $r = Invoke-HmdBulkDownload -InputPath $input -WorkRoot $work `
+            -ApiKey $sec -VtInvoker $vtInvoker -DownloadInvoker $downloadInvoker `
+            -ConfigOverride @{
+                ApiDelaySeconds  = 0
+                GenerateReport   = $false
+                DisplaySummary   = $false
+                DisplayScanLog   = $false
+                DisplayProgress  = $false
+                ProgressLog      = $true
+                LocalAvScanEnabled = $false
+            }
+
+        $r.ProgressLog | Should -Not -BeNullOrEmpty
+        Test-Path -LiteralPath $r.ProgressLog | Should -BeTrue
+        $text = Get-Content -LiteralPath $r.ProgressLog -Raw -Encoding utf8
+        $text | Should -Match 'PHASE=Download STATUS=START'
+        $text | Should -Match 'PHASE=Download STATUS=DONE'
+        $text | Should -Match 'PHASE=Process STATUS=START'
+        $text | Should -Match 'PHASE=Process STATUS=ITEM'
+        $text | Should -Match 'Verdict=Clean'
+        $text | Should -Match 'PHASE=Complete STATUS=DONE'
     }
 }
 

@@ -9,7 +9,10 @@ function Invoke-HmdBulkDownload {
         checkpoint resume, quarantine policy, and HTML/CSV artefacts.
         Optional Clean deploy; deploy-map http(s) URLs are harvested into the
         download queue (HMD-027). Local Defender scan hard-gates threats (HMD-026).
-        Optional archive inspection for ZIP/JAR/HPI/JPI (HMD-006).
+        Optional archive inspection for ZIP/JAR/HPI/JPI (HMD-006). Live progress
+        via Write-Progress / host lines and logs/progress.log (HMD-046).
+        Archive members write logs/archive-scanlog.csv; host dump is
+        DisplayArchiveScanLog (default false) so DisplayScanLog stays short (HMD-047).
     #>
     [CmdletBinding()]
     param(
@@ -59,11 +62,20 @@ function Invoke-HmdBulkDownload {
         if (-not $ConfigOverride.ContainsKey('DisplayScanLog')) {
             $cfg.DisplayScanLog = $false
         }
+        if (-not $ConfigOverride.ContainsKey('DisplayArchiveScanLog')) {
+            $cfg.DisplayArchiveScanLog = $false
+        }
+        if (-not $ConfigOverride.ContainsKey('DisplayProgress')) {
+            $cfg.DisplayProgress = $false
+        }
     }
 
     $work = Initialize-HmdWorkRoot -WorkRoot $WorkRoot
+    $hmdProgress = New-HmdProgressContext -Config $cfg -WorkRoot $work `
+        -AgentSummary:$AgentSummary -ConfigOverride $ConfigOverride
     $cachePath = Join-Path $work 'logs\hashcache.csv'
     $scanPath = Join-Path $work 'logs\scanlog.csv'
+    $archiveScanPath = Join-Path $work 'logs\archive-scanlog.csv'
     $ckptPath = Join-Path $work 'checkpoint.json'
     $reportPath = Join-Path $work 'reports\report.html'
 
@@ -121,6 +133,9 @@ function Invoke-HmdBulkDownload {
 
     $downloadResults = [object[]]@()
     if ($queued.Count -gt 0) {
+        Write-HmdProgress -Context $hmdProgress -Phase Download -Status START `
+            -Current 0 -Total $queued.Count `
+            -Message ("threads={0}" -f [int]$cfg.DownloadThreads)
         $downloadResults = @(Start-HmdDownloadPool -Urls $queued -WorkRoot $work `
                 -ThrottleLimit ([int]$cfg.DownloadThreads) `
                 -MaxFileBytes ([long]$cfg.MaxFileBytes) `
@@ -130,46 +145,49 @@ function Invoke-HmdBulkDownload {
                 -DownloadInvoker $DownloadInvoker)
         # Defensive: unwrap accidental one-level nest from older call patterns.
         $downloadResults = @(ConvertTo-HmdFlatArray -InputObject $downloadResults)
+        $dlDone = 0
+        foreach ($dlItem in $downloadResults) {
+            $dlDone++
+            $dlState = $(if ([bool]$dlItem.Success) { 'ok' } else { 'fail' })
+            Write-HmdProgress -Context $hmdProgress -Phase Download -Status ITEM `
+                -Current $dlDone -Total $downloadResults.Count `
+                -Message ("{0} {1} bytes={2}" -f [string]$dlItem.FileName, $dlState, $dlItem.Bytes)
+        }
+        $dlOk = @($downloadResults | Where-Object { [bool]$_.Success }).Count
+        Write-HmdProgress -Context $hmdProgress -Phase Download -Status DONE `
+            -Current $downloadResults.Count -Total $downloadResults.Count `
+            -Message ("ok={0} fail={1}" -f $dlOk, ($downloadResults.Count - $dlOk))
+    }
+    else {
+        Write-HmdProgress -Context $hmdProgress -Phase Download -Status DONE `
+            -Current 0 -Total 0 -Message 'checkpoint skip'
     }
 
     $scanRecords = [System.Collections.Generic.List[object]]::new()
-    if (Test-Path -LiteralPath $scanPath) {
-        foreach ($row in @(Import-Csv -LiteralPath $scanPath)) {
-            $scanRecords.Add([pscustomobject]@{
-                    Url             = $row.Url
-                    FileName        = $row.FileName
-                    LocalPath       = $row.LocalPath
-                    Sha256          = $row.Sha256
-                    Verdict         = $row.Verdict
-                    Malicious       = [int]$(if ($null -ne $row.PSObject.Properties['Malicious']) { $row.Malicious } else { 0 })
-                    Suspicious      = [int]$(if ($null -ne $row.PSObject.Properties['Suspicious']) { $row.Suspicious } else { 0 })
-                    Undetected      = [int]$(if ($null -ne $row.PSObject.Properties['Undetected']) { $row.Undetected } else { 0 })
-                    Harmless        = [int]$(if ($null -ne $row.PSObject.Properties['Harmless'] -and
-                            -not [string]::IsNullOrWhiteSpace([string]$row.Harmless)) { $row.Harmless } else { 0 })
-                    IgnoredEngines  = $(if ($null -ne $row.PSObject.Properties['IgnoredEngines']) {
-                            [string]$row.IgnoredEngines
-                        }
-                        else { '' })
-                    SignatureStatus = $row.SignatureStatus
-                    Signer          = $row.Signer
-                    DefenderStatus  = $(if ($null -ne $row.PSObject.Properties['DefenderStatus']) {
-                            [string]$row.DefenderStatus
-                        }
-                        else { '' })
-                    DefenderThreat  = $(if ($null -ne $row.PSObject.Properties['DefenderThreat']) {
-                            [string]$row.DefenderThreat
-                        }
-                        else { '' })
-                    ContentType     = $row.ContentType
-                    Bytes           = $row.Bytes
-                    CacheHit        = $row.CacheHit
-                    Error           = $row.Error
-                    ProcessedAt     = $row.ProcessedAt
-                }) | Out-Null
-        }
+    $seenScanKeys = @{}
+    foreach ($row in @(
+            @(Import-HmdScanLogCsv -Path $scanPath) +
+            @(Import-HmdScanLogCsv -Path $archiveScanPath)
+        )) {
+        if ($null -eq $row) { continue }
+        $scanKey = '{0}|{1}|{2}' -f [string]$row.Url, [string]$row.FileName, [string]$row.Sha256
+        if ($seenScanKeys.ContainsKey($scanKey)) { continue }
+        $seenScanKeys[$scanKey] = $true
+        $scanRecords.Add((ConvertTo-HmdScanLogRow -InputObject $row)) | Out-Null
     }
 
+    $dlTotal = $downloadResults.Count
+    $dlIndex = 0
+    Write-HmdProgress -Context $hmdProgress -Phase Process -Status START `
+        -Current 0 -Total $dlTotal -Message 'hash AV VT disposition'
     foreach ($dl in $downloadResults) {
+        $dlIndex++
+        $progLeaf = [string]$dl.FileName
+        if ([string]::IsNullOrWhiteSpace($progLeaf)) {
+            $progLeaf = [string]$dl.Url
+        }
+        Write-HmdProgress -Context $hmdProgress -Phase Process -Status STEP `
+            -Current $dlIndex -Total $dlTotal -Message "$progLeaf start"
         $record = [ordered]@{
             Url              = $dl.Url
             FileName         = $dl.FileName
@@ -196,12 +214,17 @@ function Invoke-HmdBulkDownload {
         try {
             if (-not $dl.Success -or [string]::IsNullOrWhiteSpace($dl.LocalPath)) {
                 $record.Verdict = 'Error'
+                Write-HmdProgress -Context $hmdProgress -Phase Process -Status ITEM `
+                    -Current $dlIndex -Total $dlTotal `
+                    -Message "$progLeaf Verdict=Error"
                 $scanRecords.Add([pscustomobject]$record) | Out-Null
                 $null = $completed.Add($dl.Url)
                 Save-HmdCheckpoint -CompletedUrls $completed -Path $ckptPath
                 continue
             }
 
+            Write-HmdProgress -Context $hmdProgress -Phase Process -Status STEP `
+                -Current $dlIndex -Total $dlTotal -Message "$progLeaf Hash"
             $sha = Get-HmdFileSha256 -Path $dl.LocalPath
             $record.Sha256 = $sha
             $sig = Get-HmdAuthenticodeInfo -Path $dl.LocalPath
@@ -219,6 +242,8 @@ function Invoke-HmdBulkDownload {
 
             # HMD-026: local AV hard gate before VT.
             if ($localAvEnabled) {
+                Write-HmdProgress -Context $hmdProgress -Phase Process -Status STEP `
+                    -Current $dlIndex -Total $dlTotal -Message "$progLeaf Defender"
                 $av = Invoke-HmdLocalAvScan -Path $dl.LocalPath -Provider $localAvProvider `
                     -Invoker $LocalAvInvoker
                 $record.DefenderStatus = [string]$av.Status
@@ -249,6 +274,8 @@ function Invoke-HmdBulkDownload {
                 if ($cache.ContainsKey($sha) -and
                     (Test-HmdCacheEntryFresh -CachedAt $cache[$sha].CachedAt -TtlDays ([int]$cfg.CacheTtlDays))) {
                     $fromCache = $true
+                    Write-HmdProgress -Context $hmdProgress -Phase Process -Status STEP `
+                        -Current $dlIndex -Total $dlTotal -Message "$progLeaf CacheHit"
                     $c = $cache[$sha]
                     $verdict = $c.Verdict
                     $mal = [int]$c.Malicious
@@ -261,6 +288,8 @@ function Invoke-HmdBulkDownload {
                         else { '' })
                 }
                 elseif (-not $SkipVirusTotal) {
+                    Write-HmdProgress -Context $hmdProgress -Phase Process -Status STEP `
+                        -Current $dlIndex -Total $dlTotal -Message "$progLeaf VirusTotal"
                     $report = Get-HmdHashReport -Sha256 $sha -ApiKey $apiKeyPlain `
                         -Invoker $VtInvoker -ApiDelaySeconds ([int]$cfg.ApiDelaySeconds)
 
@@ -379,6 +408,8 @@ function Invoke-HmdBulkDownload {
                 -not [string]::IsNullOrWhiteSpace($dl.LocalPath) -and
                 (Test-Path -LiteralPath $dl.LocalPath) -and
                 (Test-HmdIsArchivePath -Path $dl.LocalPath -Extensions $archiveExts)) {
+                Write-HmdProgress -Context $hmdProgress -Phase Process -Status STEP `
+                    -Current $dlIndex -Total $dlTotal -Message "$progLeaf Archive"
                 $insp = Invoke-HmdArchiveInspect -ArchivePath $dl.LocalPath -WorkRoot $work `
                     -ParentFileName ([string]$dl.FileName) -ParentSha256 $sha `
                     -MaxMembers $archiveMaxMembers -Extensions $archiveExts
@@ -542,6 +573,9 @@ function Invoke-HmdBulkDownload {
             }
         }
 
+        Write-HmdProgress -Context $hmdProgress -Phase Process -Status ITEM `
+            -Current $dlIndex -Total $dlTotal `
+            -Message ("{0} Verdict={1}" -f $progLeaf, [string]$record.Verdict)
         $scanRecords.Add([pscustomobject]$record) | Out-Null
         if ($null -ne $archiveRows) {
             foreach ($ar in $archiveRows) {
@@ -553,48 +587,19 @@ function Invoke-HmdBulkDownload {
         $null = $completed.Add([string]$dl.Url)
         Save-HmdCheckpoint -CompletedUrls $completed -Path $ckptPath
     }
+    Write-HmdProgress -Context $hmdProgress -Phase Process -Status DONE `
+        -Current $dlTotal -Total $dlTotal -Message 'processed'
 
-    # Rewrite scan log cleanly (fixed columns so prior rows gain empty Defender fields)
+    # Rewrite logs: top-level → scanlog.csv; #archive/ members → archive-scanlog.csv.
     if ($scanRecords.Count -gt 0) {
-        $scanRecords |
-            ForEach-Object {
-                [pscustomobject]@{
-                    Url             = $_.Url
-                    FileName        = $_.FileName
-                    LocalPath       = $_.LocalPath
-                    Sha256          = $_.Sha256
-                    Verdict         = $_.Verdict
-                    Malicious       = [int]$(if ($null -ne $_.PSObject.Properties['Malicious']) { $_.Malicious } else { 0 })
-                    Suspicious      = [int]$(if ($null -ne $_.PSObject.Properties['Suspicious']) { $_.Suspicious } else { 0 })
-                    Undetected      = [int]$(if ($null -ne $_.PSObject.Properties['Undetected']) { $_.Undetected } else { 0 })
-                    Harmless        = [int]$(if ($null -ne $_.PSObject.Properties['Harmless'] -and
-                            -not [string]::IsNullOrWhiteSpace([string]$_.Harmless)) { $_.Harmless } else { 0 })
-                    IgnoredEngines  = $(if ($null -ne $_.PSObject.Properties['IgnoredEngines']) {
-                            [string]$_.IgnoredEngines
-                        }
-                        else { '' })
-                    ArchiveInterestReason = $(if ($null -ne $_.PSObject.Properties['ArchiveInterestReason']) {
-                            [string]$_.ArchiveInterestReason
-                        }
-                        else { '' })
-                    SignatureStatus = $_.SignatureStatus
-                    Signer          = $_.Signer
-                    DefenderStatus  = $(if ($null -ne $_.PSObject.Properties['DefenderStatus']) {
-                            [string]$_.DefenderStatus
-                        }
-                        else { '' })
-                    DefenderThreat  = $(if ($null -ne $_.PSObject.Properties['DefenderThreat']) {
-                            [string]$_.DefenderThreat
-                        }
-                        else { '' })
-                    ContentType     = $_.ContentType
-                    Bytes           = $_.Bytes
-                    CacheHit        = $_.CacheHit
-                    Error           = $_.Error
-                    ProcessedAt     = $_.ProcessedAt
-                }
-            } |
-            Export-Csv -LiteralPath $scanPath -NoTypeInformation -Encoding utf8
+        $topScanRows = @($scanRecords | Where-Object {
+                -not (Test-HmdIsArchiveScanRow -FileName ([string]$_.FileName))
+            })
+        $archiveScanRows = @($scanRecords | Where-Object {
+                Test-HmdIsArchiveScanRow -FileName ([string]$_.FileName)
+            })
+        Export-HmdScanLogCsv -Records $topScanRows -Path $scanPath
+        Export-HmdScanLogCsv -Records $archiveScanRows -Path $archiveScanPath
     }
 
     if ([bool]$cfg.GenerateReport -and $scanRecords.Count -gt 0) {
@@ -607,6 +612,8 @@ function Invoke-HmdBulkDownload {
     $deploySkipCount = 0
     $deployLog = $null
     if ($mapRows.Count -gt 0) {
+        Write-HmdProgress -Context $hmdProgress -Phase Deploy -Status START `
+            -Current 0 -Total $mapRows.Count -Message ("mapRows={0}" -f $mapRows.Count)
         $deploy = Copy-HmdCleanDeploy -Records @($scanRecords) -MapRows $mapRows `
             -WorkRoot $work -Overwrite ([bool]$cfg.DeployOverwrite)
         $deployedCount = [int]$deploy.DeployedCount
@@ -614,6 +621,10 @@ function Invoke-HmdBulkDownload {
         $deployErrorCount = [int]$deploy.DeployErrorCount
         $deploySkipCount = [int]$deploy.DeploySkipCount
         $deployLog = $deploy.DeployLogPath
+        Write-HmdProgress -Context $hmdProgress -Phase Deploy -Status DONE `
+            -Current $mapRows.Count -Total $mapRows.Count `
+            -Message ("copied={0} miss={1} error={2} skip={3}" -f `
+                $deployedCount, $deployMissCount, $deployErrorCount, $deploySkipCount)
     }
 
     $topLevel = @($scanRecords | Where-Object {
@@ -658,11 +669,17 @@ function Invoke-HmdBulkDownload {
         PrefixFileNames        = [bool]$cfg.PrefixFileNames
         LocalAvScanEnabled     = $localAvEnabled
         ScanLog                = $scanPath
+        ArchiveScanLog         = $archiveScanPath
         HashCache              = $cachePath
+        ProgressLog            = $(if ($null -ne $hmdProgress.LogPath -and
+                (Test-Path -LiteralPath $hmdProgress.LogPath)) { $hmdProgress.LogPath } else { $null })
         Report                 = $(if (Test-Path -LiteralPath $reportPath) { $reportPath } else { $null })
         RecordsArePriorScanlog = ($downloadResults.Count -eq 0 -and $scanRecords.Count -gt 0)
         Records                = @($scanRecords)
     }
+
+    Write-HmdProgress -Context $hmdProgress -Phase Complete -Status DONE `
+        -Current 1 -Total 1 -Message 'run complete' -Completed
 
     if ([bool]$cfg.DisplaySummary) {
         Write-Host ''
@@ -685,7 +702,13 @@ function Invoke-HmdBulkDownload {
         }
         Write-Host ("Prior scanlog only:   {0}" -f $summary.RecordsArePriorScanlog)
         Write-Host ("ScanLog:              {0}" -f $summary.ScanLog)
+        if (Test-Path -LiteralPath $summary.ArchiveScanLog) {
+            Write-Host ("ArchiveScanLog:       {0}" -f $summary.ArchiveScanLog)
+        }
         Write-Host ("HashCache:            {0}" -f $summary.HashCache)
+        if ($summary.ProgressLog) {
+            Write-Host ("ProgressLog:          {0}" -f $summary.ProgressLog)
+        }
         if ($summary.Report) {
             Write-Host ("Report:               {0}" -f $summary.Report)
         }
@@ -701,6 +724,21 @@ function Invoke-HmdBulkDownload {
             Out-String |
             Write-Host
         Write-Host '==================='
+        Write-Host ''
+    }
+
+    $showArchiveScanLog = $false
+    if ($null -ne $cfg.PSObject.Properties['DisplayArchiveScanLog']) {
+        $showArchiveScanLog = [bool]$cfg.DisplayArchiveScanLog
+    }
+    if ($showArchiveScanLog -and (Test-Path -LiteralPath $archiveScanPath)) {
+        Write-Host '=== archive-scanlog.csv ==='
+        Import-Csv -LiteralPath $archiveScanPath |
+            Format-Table -AutoSize Url, FileName, Verdict, Malicious, Suspicious, Undetected, Harmless, `
+                ArchiveInterestReason, CacheHit, Error |
+            Out-String |
+            Write-Host
+        Write-Host '==========================='
         Write-Host ''
     }
 

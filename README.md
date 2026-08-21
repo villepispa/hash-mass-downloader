@@ -5,8 +5,10 @@ PowerShell 7.2+ bulk URL downloader with SHA256-first hash reputation
 hard-gate scan**, quarantine disposition, CSV audit logs, HTML reporting, resume
 checkpoints, optional leaf-name prefix, post-Clean deploy maps (TXT/CSV with
 `-like` wildcards and optional `http(s)` File entries), **opt-in ZIP-family
-archive inspection** with selective member VT (`ArchiveVtMode`), and a **Phase 1
-inbox worker** (Scheduled Task / CredMan API key / single-instance mutex).
+archive inspection** with selective member VT (`ArchiveVtMode`), a **Phase 1
+inbox worker** (Scheduled Task / CredMan API key / single-instance mutex),
+**live progress** (host + `progress.log`), and a **split archive-member scan
+log** (`archive-scanlog.csv`).
 
 **License:** [MIT](LICENSE) · **Spec:** [docs/product-brief.md](docs/product-brief.md) · **Release:** [docs/release.md](docs/release.md)
 
@@ -72,12 +74,19 @@ pwsh -NoProfile -File .\scripts\Invoke-HmdBulkDownload.ps1 `
 
 Post-run host display is controlled by `config/hmd.defaults.json`
 (`DisplaySummary`, `DisplayScanLog`; both default `true`).
-`PrefixFileNames` defaults to `true`; set false in config or pass
-`-NoFileNamePrefix`. `LocalAvScanEnabled` defaults to `true`.
+`DisplayArchiveScanLog` dumps `logs/archive-scanlog.csv` (archive members);
+it defaults **false** so `ArchiveVtMode` Interesting/All does not flood the
+terminal. Live progress during the run uses `DisplayProgress` (bar + host
+lines) and `ProgressLog` (`logs/progress.log`); both default `true`.
+`-AgentSummary` quiets summary, scanlog table, archive-scanlog table, and
+host progress (the file logs still write). `PrefixFileNames` defaults to
+`true`; set false in config or pass `-NoFileNamePrefix`. `LocalAvScanEnabled`
+defaults to `true`.
 Archive inspection is **off** by default (`ArchiveInspectionEnabled`); when
 enabled, member VT defaults to **None** (`ArchiveVtMode` / hash-only). Set
 `ArchiveVtMode` to `Interesting` to VT high-risk members only, or `All` for
-every member.
+every member. Member rows always go to `logs/archive-scanlog.csv` (not the
+host `scanlog.csv` table).
 
 ## Inbox worker (Phase 1)
 
@@ -146,6 +155,8 @@ Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCh
 
 pwsh -NoProfile -File .\scripts\Invoke-HmdValidate.ps1 -AgentSummary
 ```
+
+Optional Task palette (needs `CURSOR_CONFIG_ROOT`): `.vscode/tasks.json`.
 
 ## Release
 

@@ -12,6 +12,9 @@
   "GenerateReport": true,
   "DisplaySummary": true,
   "DisplayScanLog": true,
+  "DisplayArchiveScanLog": false,
+  "DisplayProgress": true,
+  "ProgressLog": true,
   "PrefixFileNames": true,
   "DeployOverwrite": true,
   "LocalAvScanEnabled": true,
@@ -20,13 +23,34 @@
   "ArchiveContentsHashOnly": true,
   "ArchiveVtMode": "None",
   "ArchiveInterestingExtensions": [
-    ".exe", ".dll", ".ps1", ".bat", ".cmd", ".vbs", ".js",
-    ".msi", ".scr", ".com", ".sys", ".jar", ".hpi", ".jpi"
+    ".exe",
+    ".dll",
+    ".ps1",
+    ".bat",
+    ".cmd",
+    ".vbs",
+    ".js",
+    ".msi",
+    ".scr",
+    ".com",
+    ".sys",
+    ".jar",
+    ".hpi",
+    ".jpi"
   ],
-  "ArchiveInterestPathKeywords": ["bin/", "lib/", "plugins/"],
+  "ArchiveInterestPathKeywords": [
+    "bin/",
+    "lib/",
+    "plugins/"
+  ],
   "ArchiveInterestCheckMz": true,
   "ArchiveMaxMembers": 500,
-  "ArchiveExtensions": [".zip", ".jar", ".hpi", ".jpi"],
+  "ArchiveExtensions": [
+    ".zip",
+    ".jar",
+    ".hpi",
+    ".jpi"
+  ],
   "MaxDownloadRetries": 3,
   "AnalysisPollSeconds": 15,
   "AnalysisPollMaxAttempts": 20,
@@ -35,5 +59,5 @@
   "InboxMutexName": "Local\\Hash.MassDownloader.Inbox",
   "InboxMutexTimeoutMs": 0,
   "ApiKeyCredentialTarget": "Hash.MassDownloader/VirusTotal",
-  "UserAgent": "Hash.MassDownloader/0.5.0"
+  "UserAgent": "Hash.MassDownloader/0.6.0"
 }

@@ -1,0 +1,4 @@
+# Generated / lab output
+out/
+scripts/_drafts/**
+.cursor/

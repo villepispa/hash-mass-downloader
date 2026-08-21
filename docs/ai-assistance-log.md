@@ -5,6 +5,11 @@ Human-readable disclosure trail for substantive AI-assisted work.
 | When | Phase / scope | Deliverable | Tool / model | Purpose | Verified by |
 |------|---------------|-------------|--------------|---------|-------------|
 <!-- AAI+ -->
+| 2026-08-21 22:10:00 | release v0.6.0 | CHANGELOG 0.6.0; ModuleVersion bump; HMD-VALIDATE-OK passed=72 | Cursor Agent [Tier 2: cursor-grok-4.6] | Cut SemVer release for HMD-046/047 + markdownlint/tasks | Operator: release, commit, push |
+| 2026-08-21 17:05:00 | HMD-047 archive-scanlog | Split member CSV + DisplayArchiveScanLog; Pester 72 | Cursor Agent [Tier 2: cursor-grok-4.6] | Stop host flood when ArchiveVtMode is Interesting/All | Operator: `Invoke-HmdValidate.ps1 -SkipLint` → HMD-VALIDATE-OK passed=72 |
+| 2026-08-18 09:40:00 | markdownlint bar | `.markdownlint.json` + `.markdownlint-cli2.jsonc`; two MD fixes | Cursor Agent [Tier 2: cursor-grok-4.6] | Match sibling product lint config | `npx markdownlint-cli2` 0 issues |
+| 2026-08-18 09:11:00 | Product ShellGuard pack | `.cursor/hooks.json` + hook scripts from spine template | Cursor Agent [Tier 2: cursor-grok-4.6] | Local Safety-tier gate on `pwsh -File` (gitignored) | User: install from spine; Core SHA-256 match |
+| 2026-08-17 13:00:00 | HMD-046 live progress | Hmd.Progress; pipeline wire; config; Pester 69; docs | Cursor Agent [Tier 2: cursor-grok-4.6] | Live host/bar + progress.log so long runs are observable | Operator: Pester 69 passed; PSA Error=0 (src) |
 | 2026-07-31 10:45:00 | OSS-021 / HMD-028+034+035 Phase 1 | Inbox worker; CredMan; mutex lifecycle; schtask; v0.5.0; Pester 59 | Cursor Agent [Tier 2: composer-2.5-fast] | Unattended serial inbox + secrets without plaintext key on disk | Operator: `Invoke-HmdValidate.ps1` → HMD-VALIDATE-OK passed=59 |
 | 2026-07-31 08:55:58 | HMD-045 selective archive VT | ArchiveVtMode; interest helpers; pipeline; Pester 49; docs | Cursor Agent [Tier 2: composer-2.5-fast] | VT only high-risk archive members (quota); complements HMD-006 | Operator: `Invoke-HmdValidate.ps1` → HMD-VALIDATE-OK passed=49 |
 | 2026-07-31 07:23:31 | HMD-006 archive inspection | Hmd.Archive; pipeline wire; config; Pester 46; docs | Cursor Agent [Tier 2: composer-2.5-fast] | ZIP-family member hash (opt-in); hash-only default; zip-slip safe | Operator: `Invoke-HmdValidate.ps1` → HMD-VALIDATE-OK passed=46 |

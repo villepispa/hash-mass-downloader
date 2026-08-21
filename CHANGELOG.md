@@ -7,6 +7,31 @@ versioning aligns with [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+_Nothing queued — latest release: **0.6.0**._
+
+## [0.6.0] - 2026-08-21
+
+### Added
+
+- **HMD-047**: archive members write `logs/archive-scanlog.csv`;
+  `DisplayArchiveScanLog` (default false) dumps that table. `DisplayScanLog`
+  stays top-level so Interesting/All does not flood the host.
+
+- Repo-root markdownlint (`.markdownlint.json` + `.markdownlint-cli2.jsonc`
+  ignores for `.cursor/` and drafts).
+- Call-through VS Code tasks (`.vscode/tasks.json`); default ScriptSafetyGate
+  path is `scripts/Invoke-HmdValidate.ps1`.
+
+- **HMD-046**: live progress for download / process / deploy — `Write-Progress`
+  plus host START/ITEM/DONE lines (`DisplayProgress`) and append-only
+  `logs/progress.log` (`ProgressLog`); both default true. `-AgentSummary`
+  quiets host/bar; the file log still writes unless `ProgressLog` is false.
+
+### Changed
+
+- ModuleVersion / UserAgent / Status → **0.6.0**.
+- Product brief Scope → v0.6.0 (live progress + split archive-scanlog).
+
 ## [0.5.0] - 2026-07-31
 
 ### Added

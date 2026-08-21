@@ -9,7 +9,8 @@
   Controlled network write: downloads URLs and optionally calls VirusTotal.
   API key from VIRUSTOTAL_API_KEY or -ApiKey. Sample upload is opt-in.
   Post-run host summary/log display follows config/hmd.defaults.json
-  (`DisplaySummary`, `DisplayScanLog`) unless -AgentSummary is set.
+  (`DisplaySummary`, `DisplayScanLog`, `DisplayArchiveScanLog`) unless
+  -AgentSummary is set.
   Optional Clean deploy via -DeployMapPath (TXT sectioned map or CSV).
   Deploy-map http(s) File entries are harvested into the download queue
   (InputPath optional when the map has ≥1 URL). Local Defender scan is on
@@ -43,7 +44,8 @@
 .PARAMETER AgentSummary
   One success-stream line for agents:
   HMD-RUN-OK input=N queued=N processed=N skipped=N clean=N … deploy=N priorScanlog=0|1
-  Disables DisplaySummary/DisplayScanLog unless overridden via module ConfigOverride.
+  Disables DisplaySummary/DisplayScanLog/DisplayArchiveScanLog unless
+  overridden via module ConfigOverride.
   Suppresses full JSON on the success stream.
 
 .EXAMPLE
