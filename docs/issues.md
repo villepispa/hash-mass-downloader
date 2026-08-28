@@ -322,9 +322,8 @@ Sample: `examples/inbox/urls.txt` + `urls.deploy.txt`.
 **Phase 1 companions (filed as gap stories):** **HMD-034** (secrets for the
 task identity), **HMD-035** (mutex + processed/failed folders).
 
-**Active plan (HMD-028 + 034 + 035):** config workspace
-`plans/2026-07-31_hmd-phase1-inbox-watcher_07452bed.plan.md` (**OSS-021**).
-GUI **HMD-029** deferred to a later plan.
+**Active plan (HMD-028 + 034 + 035):** Phase 1 inbox watcher
+(private config plan; GUI **HMD-029** deferred).
 
 ### HMD-030–032 notes — Phase 2 (web + enterprise ACL)
 

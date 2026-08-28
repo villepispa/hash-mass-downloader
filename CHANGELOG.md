@@ -70,9 +70,7 @@ _Nothing queued — latest release: **0.6.0**._
   plus gap stories (secrets, mutex/inbox, job history, webhooks, egress,
   air-gap, HA, K8s, Malicious-override, SCIM, Intune dual-host).
   Issues + product-brief phased roadmap; OSS hub rows.
-- Pulse plan **OSS-021** / Phase 1 first slice (**HMD-028/034/035**):
-  `plans/2026-07-31_hmd-phase1-inbox-watcher_07452bed.plan.md` (GUI HMD-029
-  deferred).
+- Phase 1 first slice (**HMD-028/034/035**); GUI HMD-029 deferred.
 
 ### Changed
 
