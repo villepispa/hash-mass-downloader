@@ -7,7 +7,10 @@ versioning aligns with [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
-_Nothing queued — latest release: **0.6.0**._
+### Added
+
+- **HMD-048**: GitHub Actions `virustotal-release-scan` on `release: published`
+  (repo secret `VIRUSTOTAL_API_KEY`; never committed).
 
 ## [0.6.0] - 2026-08-21
 

@@ -37,6 +37,7 @@ items here from **Backlog** (see [release.md](release.md)).
 
 | ID | Title | Status | Notes |
 |----|-------|--------|-------|
+| HMD-048 | GitHub Actions virustotal-release-scan + repo secret | in progress | G1 local; secret listed; needs G2 push |
 | HMD-044 | Intune / PS 5.1 dual-host | backlog | Phase 3+; see notes |
 | HMD-043 | SCIM provisioning | backlog | Phase 3; pairs with HMD-031/033; see notes |
 | HMD-042 | Malicious-override approval workflow | backlog | Phase 2–3; see notes |
