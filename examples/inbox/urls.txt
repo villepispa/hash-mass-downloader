@@ -1,4 +1,5 @@
 # Inbox sample URL list — drop into incoming/ as urls.txt
 # Pair with urls.deploy.txt for optional Clean deploy after triage.
+# Leading/trailing spaces and tabs on URL lines are trimmed.
 https://httpbin.org/bytes/128
 https://www.google.com/favicon.ico

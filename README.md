@@ -72,6 +72,10 @@ pwsh -NoProfile -File .\scripts\Invoke-HmdBulkDownload.ps1 `
   -NoFileNamePrefix -DeployMapPath .\examples\deploy.sample.txt
 ```
 
+URL lists and deploy maps trim leading/trailing spaces and tabs (including a
+space after `@`). A bad line is skipped with a warning; later files still
+download and copy. `Copied` counts only dest files that exist.
+
 Post-run host display is controlled by `config/hmd.defaults.json`
 (`DisplaySummary`, `DisplayScanLog`; both default `true`).
 `DisplayArchiveScanLog` dumps `logs/archive-scanlog.csv` (archive members);

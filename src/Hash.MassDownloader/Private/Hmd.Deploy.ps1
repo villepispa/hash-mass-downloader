@@ -11,9 +11,9 @@ function Test-HmdDeployDestinationLine {
         [string]$Line
     )
 
-    $t = $Line.Trim()
+    $t = Get-HmdTrimmedToken -Value $Line
     if ($t.StartsWith('@')) {
-        return -not [string]::IsNullOrWhiteSpace($t.Substring(1).Trim())
+        return -not [string]::IsNullOrWhiteSpace((Get-HmdTrimmedToken -Value $t.Substring(1)))
     }
     if ($t.StartsWith('[') -and $t.EndsWith(']') -and $t.Length -gt 2) {
         return $true
@@ -28,12 +28,12 @@ function Get-HmdDeployDestinationFromLine {
         [string]$Line
     )
 
-    $t = $Line.Trim()
+    $t = Get-HmdTrimmedToken -Value $Line
     if ($t.StartsWith('@')) {
-        return $t.Substring(1).Trim().Trim('"').Trim("'")
+        return Get-HmdTrimmedToken -Value $t.Substring(1)
     }
     if ($t.StartsWith('[') -and $t.EndsWith(']')) {
-        return $t.Substring(1, $t.Length - 2).Trim().Trim('"').Trim("'")
+        return Get-HmdTrimmedToken -Value $t.Substring(1, $t.Length - 2)
     }
     return $t
 }
@@ -117,32 +117,50 @@ function Import-HmdDeployMap {
                 continue
             }
             $rows.Add([pscustomobject]@{
-                    Destination = $dest.Trim().Trim('"').Trim("'")
-                    File        = $file.Trim().Trim('"').Trim("'")
+                    Destination = Get-HmdTrimmedToken -Value $dest
+                    File        = Get-HmdTrimmedToken -Value $file
                 }) | Out-Null
         }
     }
     else {
         $currentDest = $null
         foreach ($line in @(Get-Content -LiteralPath $Path -Encoding utf8)) {
-            $t = $line.Trim()
+            $t = Get-HmdTrimmedToken -Value $line
             if ([string]::IsNullOrWhiteSpace($t)) { continue }
             if ($t.StartsWith('#')) { continue }
+
+            # Bare '@' / '@   ' is a botched destination, not a file name.
+            if ($t.StartsWith('@') -and
+                [string]::IsNullOrWhiteSpace((Get-HmdTrimmedToken -Value $t.Substring(1)))) {
+                Write-Warning 'Deploy map @ destination is empty; skipped'
+                continue
+            }
 
             if (Test-HmdDeployDestinationLine -Line $t) {
                 $currentDest = Get-HmdDeployDestinationFromLine -Line $t
                 continue
             }
 
-            if ([string]::IsNullOrWhiteSpace($currentDest)) {
-                throw "Deploy map file entry before any destination: $t"
-            }
-
-            $file = $t.Trim('"').Trim("'")
+            $file = Get-HmdTrimmedToken -Value $t
             # Allow optional "file -> dest" one-liners under a section (ignore arrow dest).
             if ($file -match '^(.+?)\s*->\s*.+$') {
-                $file = $Matches[1].Trim().Trim('"').Trim("'")
+                $file = Get-HmdTrimmedToken -Value $Matches[1]
             }
+
+            if ([string]::IsNullOrWhiteSpace($currentDest)) {
+                if (Test-HmdHttpUrl -Value $file) {
+                    Write-Warning ("Deploy map http(s) entry before any destination (download only): {0}" -f $file)
+                    $rows.Add([pscustomobject]@{
+                            Destination = ''
+                            File        = $file
+                        }) | Out-Null
+                }
+                else {
+                    Write-Warning ("Deploy map file entry before any destination (skipped): {0}" -f $file)
+                }
+                continue
+            }
+
             $rows.Add([pscustomobject]@{
                     Destination = $currentDest
                     File        = $file
@@ -255,8 +273,14 @@ function Copy-HmdCleanDeploy {
     }
 
     foreach ($map in $MapRows) {
-        $destRoot = [string]$map.Destination
-        $want = [string]$map.File
+        $destRoot = Get-HmdTrimmedToken -Value ([string]$map.Destination)
+        $want = Get-HmdTrimmedToken -Value ([string]$map.File)
+        if ([string]::IsNullOrWhiteSpace($want)) {
+            continue
+        }
+        if ([string]::IsNullOrWhiteSpace($destRoot)) {
+            continue
+        }
         $isGlob = Test-HmdDeployPatternIsGlob -Pattern $want
         $candidates = [System.Collections.Generic.List[object]]::new()
         $seenPaths = @{}
@@ -336,6 +360,18 @@ function Copy-HmdCleanDeploy {
                     continue
                 }
                 Copy-Item -LiteralPath $srcPath -Destination $destPath -Force
+                if (-not (Test-Path -LiteralPath $destPath)) {
+                    $results.Add([pscustomobject]@{
+                            File        = $want
+                            Destination = $destRoot
+                            SourcePath  = $srcPath
+                            DestPath    = $destPath
+                            Status      = 'Error'
+                            Error       = 'Copy finished but destination file is missing'
+                            CopiedAt    = (Get-Date).ToString('o')
+                        }) | Out-Null
+                    continue
+                }
                 $results.Add([pscustomobject]@{
                         File        = $want
                         Destination = $destRoot

@@ -1,6 +1,6 @@
 @{
     RootModule        = 'Hash.MassDownloader.psm1'
-    ModuleVersion     = '0.6.0'
+    ModuleVersion     = '0.7.0'
     GUID              = 'c8e4a1b2-7f3d-4a9e-b5c1-0d8e2f6a4b19'
     Author            = 'Ville Pispa'
     CompanyName       = 'Independent'
@@ -76,7 +76,7 @@
             Tags         = @('Hash', 'Reputation', 'VirusTotal', 'Malware', 'Download', 'Security', 'PowerShell')
             LicenseUri   = 'https://opensource.org/licenses/MIT'
             ProjectUri   = 'https://github.com/villepispa/hash-mass-downloader'
-            ReleaseNotes = 'v0.6.0 - live progress (HMD-046) and split archive-member scanlog (HMD-047).'
+            ReleaseNotes = 'v0.7.0 — input-line trim (HMD-049) and VirusTotal release URL scan (HMD-048).'
         }
     }
 }

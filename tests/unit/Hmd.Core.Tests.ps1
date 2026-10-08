@@ -51,6 +51,33 @@ https://d.example/w,n2
         $urls.Count | Should -Be 2
         $urls[1] | Should -Be 'https://d.example/w'
     }
+
+    It 'trims leading and trailing spaces and tabs on URL lines' {
+        $tmp = Join-Path $TestDrive 'urls-pad.txt'
+        @(
+            "  https://a.example/x  "
+            "`thttps://b.example/y`t"
+            '"  https://c.example/z  "'
+        ) | Set-Content -LiteralPath $tmp -Encoding utf8
+        $urls = [string[]]@(Import-HmdUrlList -Path $tmp)
+        $urls.Count | Should -Be 3
+        $urls[0] | Should -Be 'https://a.example/x'
+        $urls[1] | Should -Be 'https://b.example/y'
+        $urls[2] | Should -Be 'https://c.example/z'
+    }
+
+    It 'keeps valid URLs when a junk line sits between them' {
+        $tmp = Join-Path $TestDrive 'urls-junk.txt'
+        @(
+            'https://a.example/good1'
+            'not a url'
+            'https://b.example/good2'
+        ) | Set-Content -LiteralPath $tmp -Encoding utf8
+        $urls = [string[]]@(Import-HmdUrlList -Path $tmp)
+        $urls.Count | Should -Be 2
+        $urls[0] | Should -Be 'https://a.example/good1'
+        $urls[1] | Should -Be 'https://b.example/good2'
+    }
 }
 
 Describe 'Get-HmdVerdictFromStats' {
@@ -240,6 +267,65 @@ D:\Bin,b.exe
         $rows.Count | Should -Be 2
         $rows[1].File | Should -Be 'b.exe'
     }
+
+    It 'trims spaces and tabs after @ and around destinations and files' {
+        $tmp = Join-Path $TestDrive 'deploy-pad.txt'
+        @(
+            '@  C:\App1'
+            "  tool.exe  "
+            "`t@`tD:\Bin`t"
+            '"  helper.dll  "'
+            '@ " E:\Quoted "'
+            'plugin.pgi'
+        ) | Set-Content -LiteralPath $tmp -Encoding utf8
+        $rows = @(Import-HmdDeployMap -Path $tmp)
+        $rows.Count | Should -Be 3
+        $rows[0].Destination | Should -Be 'C:\App1'
+        $rows[0].File | Should -Be 'tool.exe'
+        $rows[1].Destination | Should -Be 'D:\Bin'
+        $rows[1].File | Should -Be 'helper.dll'
+        $rows[2].Destination | Should -Be 'E:\Quoted'
+        $rows[2].File | Should -Be 'plugin.pgi'
+    }
+
+    It 'does not abort later sections when a line is invalid' {
+        $tmp = Join-Path $TestDrive 'deploy-junk.txt'
+        @(
+            'orphan-file.exe'
+            '@C:\App1'
+            'tool.exe'
+            '@   '
+            '@D:\Bin'
+            'https://a.example/kept.exe'
+        ) | Set-Content -LiteralPath $tmp -Encoding utf8
+        $rows = @(Import-HmdDeployMap -Path $tmp -WarningAction SilentlyContinue)
+        $rows.Count | Should -Be 2
+        $rows[0].Destination | Should -Be 'C:\App1'
+        $rows[0].File | Should -Be 'tool.exe'
+        $rows[1].Destination | Should -Be 'D:\Bin'
+        $rows[1].File | Should -Be 'https://a.example/kept.exe'
+        $urls = @(Get-HmdUrlsFromDeployMap -MapRows $rows)
+        $urls | Should -Contain 'https://a.example/kept.exe'
+    }
+
+    It 'harvests http(s) lines that appear before the first destination' {
+        $tmp = Join-Path $TestDrive 'deploy-url-first.txt'
+        @(
+            'https://a.example/orphan.exe'
+            '@C:\App1'
+            'https://a.example/kept.exe'
+        ) | Set-Content -LiteralPath $tmp -Encoding utf8
+        $rows = @(Import-HmdDeployMap -Path $tmp -WarningAction SilentlyContinue)
+        $urls = @(Get-HmdUrlsFromDeployMap -MapRows $rows)
+        $urls.Count | Should -Be 2
+        $urls[0] | Should -Be 'https://a.example/orphan.exe'
+        $urls[1] | Should -Be 'https://a.example/kept.exe'
+        $copyRows = @($rows | Where-Object {
+                -not [string]::IsNullOrWhiteSpace([string]$_.Destination)
+            })
+        $copyRows.Count | Should -Be 1
+        $copyRows[0].Destination | Should -Be 'C:\App1'
+    }
 }
 
 Describe 'Test-HmdDeployPatternIsGlob' {
@@ -310,6 +396,32 @@ Describe 'Copy-HmdCleanDeploy globs' {
         $r = Copy-HmdCleanDeploy -Records $records -MapRows $map -WorkRoot $work
         $r.DeployedCount | Should -Be 1
         Test-Path -LiteralPath (Join-Path $plugDir 'plug.pgi') | Should -BeTrue
+    }
+
+    It 'trims padded destinations and counts Copied only when the dest file exists' {
+        $work = Join-Path $TestDrive 'pad-copy-work'
+        $null = Initialize-HmdWorkRoot -WorkRoot $work
+        $cleanDir = Join-Path $work 'Clean'
+        $dest = Join-Path $TestDrive 'pad-copy-dest'
+        Set-Content -LiteralPath (Join-Path $cleanDir 'tool.exe') -Value 'exe' -Encoding utf8
+        $records = @(
+            [pscustomobject]@{
+                Verdict   = 'Clean'
+                FileName  = 'tool.exe'
+                Url       = 'https://mock.example/tool.exe'
+                LocalPath = (Join-Path $cleanDir 'tool.exe')
+            }
+        )
+        $map = @(
+            [pscustomobject]@{ Destination = "  $dest  "; File = '  tool.exe  ' }
+            [pscustomobject]@{ Destination = ''; File = 'tool.exe' }
+        )
+        $r = Copy-HmdCleanDeploy -Records $records -MapRows $map -WorkRoot $work
+        $r.DeployedCount | Should -Be 1
+        $r.Results.Count | Should -Be 1
+        $r.Results[0].Status | Should -Be 'Copied'
+        $r.Results[0].Destination | Should -Be $dest
+        Test-Path -LiteralPath (Join-Path $dest 'tool.exe') | Should -BeTrue
     }
 }
 

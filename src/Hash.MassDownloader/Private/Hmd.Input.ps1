@@ -1,5 +1,39 @@
 #Requires -Version 7.2
 
+function Get-HmdTrimmedToken {
+    <#
+    .SYNOPSIS
+        Trim leading/trailing blanks, strip one pair of quotes, trim again.
+    .DESCRIPTION
+        Blanks include space, tab, CR/LF, NBSP, BOM, and zero-width space so
+        padded URL and @destination lines still parse.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    if ($null -eq $Value) {
+        return ''
+    }
+
+    $trimChars = [char[]]@(
+        [char]0x20, [char]0x09, [char]0x0A, [char]0x0B, [char]0x0C, [char]0x0D,
+        [char]0xA0, [char]0xFEFF, [char]0x200B
+    )
+    $s = $Value.Trim().Trim($trimChars)
+    if ($s.Length -ge 2) {
+        $q = $s[0]
+        $isQuote = ($q -eq [char]0x22) -or ($q -eq [char]0x27)
+        if ($isQuote -and $s[$s.Length - 1] -eq $q) {
+            $s = $s.Substring(1, $s.Length - 2).Trim().Trim($trimChars)
+        }
+    }
+    return $s
+}
+
 function Add-HmdUrlCandidate {
     param(
         [System.Collections.Generic.List[string]]$Urls,
@@ -7,6 +41,7 @@ function Add-HmdUrlCandidate {
         [string]$Candidate
     )
 
+    $Candidate = Get-HmdTrimmedToken -Value $Candidate
     if ([string]::IsNullOrWhiteSpace($Candidate)) { return }
 
     # Split accidental multi-URL lines (space / tab / comma / semicolon).
@@ -16,7 +51,7 @@ function Add-HmdUrlCandidate {
     )
 
     foreach ($part in $parts) {
-        $u = $part.Trim().Trim('"').Trim("'")
+        $u = Get-HmdTrimmedToken -Value $part
         if ([string]::IsNullOrWhiteSpace($u)) { continue }
         if ($u -notmatch '^https?://') { continue }
         if ($Seen.ContainsKey($u)) { continue }
@@ -66,7 +101,7 @@ function Import-HmdUrlList {
     else {
         $lines = Get-Content -LiteralPath $Path -Encoding utf8
         foreach ($line in $lines) {
-            $t = $line.Trim()
+            $t = Get-HmdTrimmedToken -Value $line
             if ([string]::IsNullOrWhiteSpace($t)) { continue }
             if ($t.StartsWith('#')) { continue }
             Add-HmdUrlCandidate -Urls $urls -Seen $seen -Candidate $t
@@ -180,10 +215,11 @@ function Test-HmdHttpUrl {
         [string]$Value
     )
 
-    if ([string]::IsNullOrWhiteSpace($Value)) {
+    $t = Get-HmdTrimmedToken -Value $Value
+    if ([string]::IsNullOrWhiteSpace($t)) {
         return $false
     }
-    return ($Value.Trim() -match '^https?://')
+    return ($t -match '^https?://')
 }
 
 function Get-HmdUrlsFromDeployMap {
@@ -201,11 +237,11 @@ function Get-HmdUrlsFromDeployMap {
     $urls = [System.Collections.Generic.List[string]]::new()
     $seen = @{}
     foreach ($row in @($MapRows)) {
-        $file = [string]$row.File
+        $file = Get-HmdTrimmedToken -Value ([string]$row.File)
         if (-not (Test-HmdHttpUrl -Value $file)) {
             continue
         }
-        $u = $file.Trim()
+        $u = $file
         if ($seen.ContainsKey($u)) {
             continue
         }

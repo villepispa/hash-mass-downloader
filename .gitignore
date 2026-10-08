@@ -9,3 +9,9 @@ scripts/_drafts/
 
 # Cursor agent / VM workspace state (not part of the product)
 .cursor/
+
+# Proton Drive conflict copies. Example:
+#   BACKLOG (# Edit conflict 2026-08-19 eqih1yC #).md
+# Matcher is the distinctive "Edit conflict" token so gitignore `#`
+# comments cannot truncate the pattern. Canonical file wins after a human check.
+**/*Edit conflict*

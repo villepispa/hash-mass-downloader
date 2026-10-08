@@ -5,7 +5,7 @@ Comprehensive technical specification and design document for **Hash.MassDownloa
 
 **Host floor:** PowerShell 7.2+  
 **License:** MIT  
-**Status:** v0.6.0 — core pipeline, Clean deploy, Defender hard gate, archive inspection, Phase 1 inbox, live progress, split archive-scanlog; remaining roadmap items below are documented only.
+**Status:** v0.7.0 — core pipeline, Clean deploy, Defender hard gate, archive inspection, Phase 1 inbox, live progress, split archive-scanlog, input-line trim, VirusTotal release scan; remaining roadmap items below are documented only.
 
 ---
 
@@ -25,7 +25,7 @@ resume capabilities.
 
 ## Scope
 
-### In scope (v0.6.0)
+### In scope (v0.7.0)
 
 | Capability | Notes |
 |------------|-------|
@@ -515,7 +515,11 @@ are set in `ConfigOverride`. `ProgressLog` still writes `logs/progress.log`
 unless explicitly set false.
 
 `-DeployMapPath` accepts a sectioned TXT (`@destination` then file names) or CSV
-(`Destination,File`). `File` may be exact, a wildcard, or an `http(s)` URL.
+(`Destination,File`). Leading/trailing spaces and tabs (and one pair of quotes)
+are trimmed on destination, file, and URL tokens (`HMD-049`). A malformed line
+is skipped with a warning; later sections still download and copy. `http(s)`
+lines before the first `@destination` are harvested for download only.
+`File` may be exact, a wildcard, or an `http(s)` URL.
 Wildcards use PowerShell **`-like`** (not regex): `*` = any sequence, `?` = one
 character; matching is case-insensitive. Examples: `*.pgi`, `file?.dll`. Only
 `*` / `?` enable glob mode (no `[a-z]` character classes). A glob copies **all**
@@ -523,7 +527,7 @@ matching Clean files (one `deploy_copy.csv` row each). `http(s)` entries are
 **harvested** into the download queue and matched by full URL (dest leaf = URL
 path leaf). `-InputPath` may be omitted when the map has ≥1 such URL. See
 `examples/deploy.sample.txt` / `.csv` and issues **HMD-019** / **HMD-023** /
-**HMD-027**.
+**HMD-027** / **HMD-049**.
 
 ## Error handling matrix
 
@@ -534,6 +538,10 @@ path leaf). `-InputPath` may be omitted when the map has ≥1 such URL. See
 | HTTP 429 | Back off (delay × factor); retry within limit |
 | Transient 5xx / network | Retry with backoff |
 | Processing exception | Isolate to `Error/`; continue batch |
+| Padded URL / `@dest` line | Trim spaces/tabs/quotes; continue batch |
+| Deploy-map junk / empty `@` | Warn; skip that line; later sections still run |
+| `http(s)` before first `@dest` | Harvest for download; no copy until a dest is set |
+| Deploy copy | `Copied` only when the dest file exists |
 
 ## Future roadmap
 

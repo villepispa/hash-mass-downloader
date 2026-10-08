@@ -7,10 +7,26 @@ versioning aligns with [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
+_Nothing queued — latest release: **0.7.0**._
+
+## [0.7.0] - 2026-10-08
+
 ### Added
 
 - **HMD-048**: GitHub Actions `virustotal-release-scan` on `release: published`
   (repo secret `VIRUSTOTAL_API_KEY`; never committed).
+
+### Fixed
+
+- **HMD-049**: URL lists and deploy maps trim leading/trailing spaces and tabs
+  (including padding inside one pair of quotes). A bad `@destination` or
+  non-URL line is skipped with a warning instead of aborting the rest of the
+  file. `Copied` is counted only when the destination file exists.
+
+### Changed
+
+- ModuleVersion / UserAgent / Status → **0.7.0**.
+- Product brief Scope → v0.7.0 (input-line trim; VirusTotal release scan).
 
 ## [0.6.0] - 2026-08-21
 

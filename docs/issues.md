@@ -9,6 +9,8 @@ items here from **Backlog** (see [release.md](release.md)).
 
 | ID | Title | Status | Notes |
 |----|-------|--------|-------|
+| HMD-049 | Trim/skip bad URL and @destination lines; honest Copied count | done | v0.7.0; see notes |
+| HMD-048 | GitHub Actions virustotal-release-scan + repo secret | done | v0.7.0; `release: published`; secret never committed |
 | HMD-047 | Split archive-member scan log + DisplayArchiveScanLog | done | v0.6.0; `archive-scanlog.csv`; host dump default false; see notes |
 | HMD-046 | Live terminal + progress.log for run actions | done | v0.6.0; Write-Progress + host lines; `logs/progress.log`; see notes |
 | HMD-028 | Inbox worker + Scheduled Task | done | v0.5.0; `Invoke-HmdInboxWorker`; Plan `07452bed` |
@@ -37,7 +39,6 @@ items here from **Backlog** (see [release.md](release.md)).
 
 | ID | Title | Status | Notes |
 |----|-------|--------|-------|
-| HMD-048 | GitHub Actions virustotal-release-scan + repo secret | in progress | G1 local; secret listed; needs G2 push |
 | HMD-044 | Intune / PS 5.1 dual-host | backlog | Phase 3+; see notes |
 | HMD-043 | SCIM provisioning | backlog | Phase 3; pairs with HMD-031/033; see notes |
 | HMD-042 | Malicious-override approval workflow | backlog | Phase 2–3; see notes |
@@ -64,6 +65,21 @@ items here from **Backlog** (see [release.md](release.md)).
 | HMD-007 | SIEM / enterprise reporting (scheduling → HMD-028) | backlog | Roadmap; scheduler slice moved to HMD-028 |
 
 ## Notes
+
+### HMD-049 notes — input whitespace and skip-bad-line
+
+**Intent:** A padded `https://` line or `@ destination` (space/tab after `@`,
+or quotes around a padded path) must not drop that file from download/copy,
+and must not abort later entries. `Copied` must mean the dest file exists.
+
+**Acceptance:**
+
+1. Leading/trailing space, tab, CR/LF, NBSP, BOM, and one pair of quotes are
+   stripped from URL, `@destination`, and File tokens.
+2. A junk line or empty `@` does not throw; later `@dest` blocks still parse.
+3. `http(s)` before the first destination is harvested (download only).
+4. `Copy-HmdCleanDeploy` trims map rows at copy time and sets `Copied` only
+   after `Test-Path` on the dest file.
 
 ### HMD-047 notes — archive-member scan log (separate from DisplayScanLog)
 

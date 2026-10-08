@@ -5,6 +5,8 @@ Human-readable disclosure trail for substantive AI-assisted work.
 | When | Phase / scope | Deliverable | Tool / model | Purpose | Verified by |
 |------|---------------|-------------|--------------|---------|-------------|
 <!-- AAI+ -->
+| 2026-10-08 21:33:00 | release v0.7.0 | CHANGELOG 0.7.0; ModuleVersion bump; HMD-VALIDATE-OK passed=78 | Cursor Agent [Tier 2: cursor-grok-4.6] | Cut SemVer release for HMD-048/049 | Operator: release, commit, push |
+| 2026-09-11 20:25:00 | HMD-049 input trim | Parser + copy verify; Pester 78 | Cursor Agent [Tier 2: cursor-grok-4.6] | Trim URL/@dest whitespace; skip bad lines; honest Copied count | Operator: Pester 78 passed |
 | 2026-08-21 22:10:00 | release v0.6.0 | CHANGELOG 0.6.0; ModuleVersion bump; HMD-VALIDATE-OK passed=72 | Cursor Agent [Tier 2: cursor-grok-4.6] | Cut SemVer release for HMD-046/047 + markdownlint/tasks | Operator: release, commit, push |
 | 2026-08-21 17:05:00 | HMD-047 archive-scanlog | Split member CSV + DisplayArchiveScanLog; Pester 72 | Cursor Agent [Tier 2: cursor-grok-4.6] | Stop host flood when ArchiveVtMode is Interesting/All | Operator: `Invoke-HmdValidate.ps1 -SkipLint` → HMD-VALIDATE-OK passed=72 |
 | 2026-08-18 09:40:00 | markdownlint bar | `.markdownlint.json` + `.markdownlint-cli2.jsonc`; two MD fixes | Cursor Agent [Tier 2: cursor-grok-4.6] | Match sibling product lint config | `npx markdownlint-cli2` 0 issues |

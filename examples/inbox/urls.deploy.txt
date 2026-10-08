@@ -1,5 +1,6 @@
 # Inbox sample deploy sidecar — must be named urls.deploy.txt beside urls.txt
 # Same format as examples/deploy.sample.txt (sectioned @destination + files).
+# Spaces/tabs after @ are trimmed; a bad line does not abort later sections.
 @out\deploy-demo\app1
 favicon.ico
 
