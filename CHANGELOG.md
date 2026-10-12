@@ -7,7 +7,19 @@ versioning aligns with [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ## [Unreleased]
 
-_Nothing queued — latest release: **0.7.0**._
+_Nothing queued - latest release: **0.7.1**._
+
+## [0.7.1] - 2026-10-12
+
+### Fixed
+
+- **AI assistance log:** `docs/ai-assistance-log.md` renders as one GitHub table.
+  The `<!-- AAI+ -->` marker sits in the newest row's When cell. A comment on
+  its own line under the header made GitHub show only the header.
+
+### Changed
+
+- ModuleVersion / UserAgent / Status → **0.7.1**.
 
 ## [0.7.0] - 2026-10-08
 

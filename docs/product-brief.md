@@ -5,7 +5,7 @@ Comprehensive technical specification and design document for **Hash.MassDownloa
 
 **Host floor:** PowerShell 7.2+  
 **License:** MIT  
-**Status:** v0.7.0 — core pipeline, Clean deploy, Defender hard gate, archive inspection, Phase 1 inbox, live progress, split archive-scanlog, input-line trim, VirusTotal release scan; remaining roadmap items below are documented only.
+**Status:** v0.7.1 — core pipeline, Clean deploy, Defender hard gate, archive inspection, Phase 1 inbox, live progress, split archive-scanlog, input-line trim, VirusTotal release scan; remaining roadmap items below are documented only.
 
 ---
 
@@ -25,7 +25,7 @@ resume capabilities.
 
 ## Scope
 
-### In scope (v0.7.0)
+### In scope (v0.7.1)
 
 | Capability | Notes |
 |------------|-------|
