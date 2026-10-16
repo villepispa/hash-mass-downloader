@@ -7,6 +7,10 @@ Product issue register. IDs are stable (`HMD-NNN`). Newest first.
 Shipped features (Status `done`). Newest first. On release, move completed
 items here from **Backlog** (see [release.md](release.md)).
 
+Latest release **v0.7.1** (2026-10-12) is the assistance-log table fix plus
+ModuleVersion, UserAgent, and Status. No new `HMD-` id. Rows below name the
+release that introduced each feature (`HMD-048` / `HMD-049` are **v0.7.0**).
+
 | ID | Title | Status | Notes |
 |----|-------|--------|-------|
 | HMD-049 | Trim/skip bad URL and @destination lines; honest Copied count | done | v0.7.0; see notes |
@@ -20,7 +24,11 @@ items here from **Backlog** (see [release.md](release.md)).
 | HMD-006 | Archive inspection (HPI/JPI/JAR) | done | ZIP-family; hash-only default; see notes |
 | HMD-027 | Deploy-map http(s) URLs: harvest + full-URL match | done | Optional InputPath when map has ≥1 URL |
 | HMD-026 | Local AV scan (MS Defender); hard gate on threat | done | Start-MpScan / MpCmdRun; scanlog DefenderStatus |
+| HMD-025 | FP-aware VT verdict policy (threshold + engine ignore) | done | v0.3.0; ChromeDriver VirIT `Win95.Marburg`; see notes |
 | HMD-024 | Release pipeline: bump version before commit/tag | done | `Invoke-HmdBumpVersion.ps1`; validate `-CheckOnly`; `docs/release.md` |
+| HMD-023 | Deploy-map globs / wildcards (`*.pgi`) | done | v0.2.0; `*` / `?` via `-like`; expands to all Clean matches; Miss if zero |
+| HMD-019 | Copy Clean files to mapped destinations | done | v0.2.0; sectioned TXT + CSV map; create dirs; copy+audit CSV; unmatched warn |
+| HMD-018 | Optional `NNNN_` download filename prefix | done | v0.2.0; config `PrefixFileNames` (default true); `-NoFileNamePrefix`; collision disambiguation |
 | HMD-017 | Rename summary PendingCount → QueuedCount | done | Locals `$queued`/`$queuedList`; agent `queued=`; host `Input / Queued` |
 | HMD-016 | Rename product Vt/Vtm/VTM → Hash/Hmd/HMD | done | Module `Hash.MassDownloader`; keep VT provider tokens; folder `hash-mass-downloader` |
 | HMD-014 | Persist VT Harmless to scanlog + hashcache CSV | done | Column after Undetected |
@@ -53,13 +61,9 @@ items here from **Backlog** (see [release.md](release.md)).
 | HMD-031 | Access control — AD group and/or Entra ID (SSO) | backlog | Phase 2; see notes |
 | HMD-030 | Web front-end + modern back-end | backlog | Phase 2; see notes |
 | HMD-029 | PowerShell GUI for supplying input files | backlog | Phase 1; see notes |
-| HMD-025 | FP-aware VT verdict policy (threshold + engine ignore) | done | ChromeDriver VirIT `Win95.Marburg`; see notes |
-| HMD-023 | Deploy-map globs / wildcards (`*.pgi`) | done | `*` / `?` via `-like`; expands to all Clean matches; Miss if zero |
 | HMD-022 | Deploy-map explicit rename (`tool.exe → app.exe`) | backlog | Dest leaf differs from source leaf |
 | HMD-021 | Deploy-map match by Sha256 / Url columns | backlog | CSV (and optional TXT) keys beyond FileName |
 | HMD-020 | Clean-deploy dry-run | backlog | Preview copies without writing; log Status=WouldCopy |
-| HMD-019 | Copy Clean files to mapped destinations | done | Sectioned TXT + CSV map; create dirs; copy+audit CSV; unmatched warn |
-| HMD-018 | Optional `NNNN_` download filename prefix | done | Config `PrefixFileNames` (default true); `-NoFileNamePrefix`; collision disambiguation |
 | HMD-015 | Extend `hashcache.Source` beyond VirusTotal | backlog | Controlled vocabulary + optional providers; see candidates in issue notes |
 | HMD-005 | SQLite hash cache | backlog | Roadmap |
 | HMD-007 | SIEM / enterprise reporting (scheduling → HMD-028) | backlog | Roadmap; scheduler slice moved to HMD-028 |

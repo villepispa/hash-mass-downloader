@@ -5,7 +5,8 @@ Newest-first. The `<!-- AAI+ -->` marker stays in the newest row's When cell.
 
 | When | Phase / scope | Deliverable | Tool / model | Purpose | Verified by |
 |------|---------------|-------------|--------------|---------|-------------|
-| <!-- AAI+ --> 2026-10-08 21:33:00 | release v0.7.0 | CHANGELOG 0.7.0; ModuleVersion bump; HMD-VALIDATE-OK passed=78 | Cursor Agent [Tier 2: cursor-grok-4.6] | Cut SemVer release for HMD-048/049 | Operator: release, commit, push |
+| <!-- AAI+ --> 2026-10-16 15:24:00 | Release register sync | docs/issues.md names v0.7.1; shipped HMD-018, HMD-019, HMD-023, HMD-025 moved to Done | Cursor Grok 4.7 [Tier 2: grok-4.7] | Keep the issue register aligned with tag v0.7.1 | Done names v0.7.1; those four ids are not in Backlog |
+| 2026-10-08 21:33:00 | release v0.7.0 | CHANGELOG 0.7.0; ModuleVersion bump; HMD-VALIDATE-OK passed=78 | Cursor Agent [Tier 2: cursor-grok-4.6] | Cut SemVer release for HMD-048/049 | Operator: release, commit, push |
 | 2026-09-11 20:25:00 | HMD-049 input trim | Parser + copy verify; Pester 78 | Cursor Agent [Tier 2: cursor-grok-4.6] | Trim URL/@dest whitespace; skip bad lines; honest Copied count | Operator: Pester 78 passed |
 | 2026-08-21 22:10:00 | release v0.6.0 | CHANGELOG 0.6.0; ModuleVersion bump; HMD-VALIDATE-OK passed=72 | Cursor Agent [Tier 2: cursor-grok-4.6] | Cut SemVer release for HMD-046/047 + markdownlint/tasks | Operator: release, commit, push |
 | 2026-08-21 17:05:00 | HMD-047 archive-scanlog | Split member CSV + DisplayArchiveScanLog; Pester 72 | Cursor Agent [Tier 2: cursor-grok-4.6] | Stop host flood when ArchiveVtMode is Interesting/All | Operator: `Invoke-HmdValidate.ps1 -SkipLint` → HMD-VALIDATE-OK passed=72 |
